@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Калькулятор тарифов</title>
+<style>
+/* ============ Design tokens (палитра сохранена без изменений) ============ */
+:root{
+  --brand-red:#cf1734;--brand-red-dark:#a90f27;
+  --brand-blue:#244b7d;--brand-blue-deep:#193b68;
+  --ink:#1b2430;--muted:#5b6675;--line:#dfe4ea;--soft:#f5f7fa;
+  --paper:#ffffff;--bg:#eef2f6;--green:#1f7a4d;
+  --shadow-sm:0 2px 8px rgba(25,59,104,.06);
+  --shadow-md:0 10px 28px rgba(25,59,104,.08);
+  --shadow-lg:0 20px 48px rgba(25,59,104,.14);
+  --radius-lg:18px;--radius-md:12px;--radius-sm:8px;
+  --focus-ring:0 0 0 4px rgba(36,75,125,.16);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:linear-gradient(180deg,#f3f6f9 0%,#edf1f5 100%);color:var(--ink);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+:focus-visible{outline:none;box-shadow:var(--focus-ring);border-radius:6px}
+button:focus-visible,a:focus-visible{box-shadow:var(--focus-ring)}
+
+/* ============ Layout shell ============ */
+.wrap{max-width:1720px;margin:0 auto;padding:24px 28px 72px}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:20px;background:#fff;border:1px solid rgba(36,75,125,.10);border-radius:var(--radius-lg);padding:14px 20px;margin-bottom:20px;box-shadow:var(--shadow-sm)}
+.brandmark{display:flex;align-items:center;gap:12px}
+.brand-logo{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,var(--brand-red),var(--brand-red-dark));color:#fff;display:grid;place-items:center;font-weight:900;font-size:17px;letter-spacing:-.02em;box-shadow:0 8px 18px rgba(207,23,52,.22)}
+.brandname{font-weight:900;letter-spacing:-.2px;line-height:1.25}
+.brandname span{display:block;color:var(--brand-blue);font-size:11px;letter-spacing:.09em;text-transform:uppercase}
+.brandname strong{font-size:17px;color:var(--brand-red)}
+.status{font-size:13.5px;min-height:20px;font-weight:700;color:var(--green)}
+.status.err{color:var(--brand-red)}
+.topbar-right{display:flex;align-items:center;gap:14px}
+
+.top{display:flex;justify-content:space-between;align-items:flex-end;gap:22px;margin-bottom:18px}
+.top h1{margin:0;font-size:32px;letter-spacing:-.7px;color:var(--brand-blue-deep)}
+.top p{margin:6px 0 0;color:var(--muted);font-size:14.5px;max-width:56ch}
+
+/* ============ Cards ============ */
+.card{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius-lg);box-shadow:var(--shadow-md);margin-bottom:20px;overflow:hidden}
+.card-head{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:18px 22px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#fff 0%,#fbfcfe 100%)}
+.card-head h2{margin:0;font-size:18px;font-weight:800;color:var(--brand-blue-deep)}
+.meta{margin-top:4px;color:var(--muted);font-size:13px}
+.card-pad{padding:22px}
+
+/* ============ Form controls ============ */
+.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.field label{font-size:12.5px;color:#4f5b67;font-weight:700;letter-spacing:.01em}
+input,select,textarea,button{font:inherit}
+input,select,textarea{width:100%;padding:11px 13px;border:1px solid #ccd4dd;border-radius:var(--radius-sm);background:#fff;color:var(--ink);outline:0;font-size:15px;line-height:1.4;transition:border-color .15s,box-shadow .15s}
+input::placeholder,textarea::placeholder{color:#9aa4b0}
+input:focus,select:focus,textarea:focus{border-color:var(--brand-blue);box-shadow:var(--focus-ring)}
+input:disabled{background:var(--soft);color:#8b95a1;cursor:not-allowed}
+textarea{min-height:80px;resize:vertical}
+.full{grid-column:1/-1}
+
+.btn{border:1px solid var(--brand-blue);background:var(--brand-blue);color:#fff;padding:11px 17px;min-height:44px;border-radius:var(--radius-sm);cursor:pointer;font-weight:800;font-size:14px;letter-spacing:.01em;transition:transform .12s,filter .12s,background .15s,box-shadow .15s;box-shadow:0 2px 0 rgba(0,0,0,.02)}
+.btn:hover{filter:brightness(1.06)}
+.btn:active{transform:translateY(1px)}
+.btn.ghost{background:#fff;color:var(--brand-blue);border-color:#ccd4dd}
+.btn.ghost:hover{background:var(--soft)}
+.btn.red{background:var(--brand-red);border-color:var(--brand-red)}
+.btn.red:hover{background:var(--brand-red-dark);filter:none}
+.btn.small{padding:8px 12px;font-size:13px;min-height:36px}
+.btn.danger{background:#fff;color:var(--brand-red);border-color:#e6b9c1}
+.btn.danger:hover{background:#fdf1f3}
+
+/* ============ Estimate columns / accordion ============ */
+.estimate-wrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;padding:22px 20px 20px}
+.estimate{border:1px solid var(--line);border-radius:var(--radius-md);overflow:hidden;background:#fff}
+.estimate-head{padding:16px 18px;background:linear-gradient(135deg,rgba(36,75,125,.06),rgba(207,23,52,.03));border-bottom:1px solid var(--line)}
+.estimate-head h2{margin:0;font-size:19px;font-weight:800;color:var(--brand-blue-deep)}
+.estimate-head p{margin:4px 0 0;color:var(--muted);font-size:12.5px}
+.price-list{padding:0 18px 12px}
+.section{border-top:1px solid var(--line)}
+.section:first-child{border-top:0}
+.section-head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:15px 4px;cursor:pointer;border-radius:8px;transition:background .12s}
+.section-head:hover{background:#f8fafc}
+.left{display:flex;align-items:center;gap:11px;min-width:0}
+.chev{flex:0 0 auto;width:30px;height:30px;display:grid;place-items:center;border:1px solid #d7dfe8;border-radius:9px;background:#fff;color:var(--brand-red);transition:transform .18s,background .18s;font-size:16px}
+.section.open .chev{transform:rotate(90deg);background:#fff6f7}
+.section-title{font-weight:800;font-size:16px;color:#243b5a}
+.section-count{font-size:12px;color:var(--muted);margin-top:1px}
+.section-body{display:none;padding-bottom:16px}
+.section.open .section-body{display:block}
+
+.subgroup{border:1px solid var(--line);border-radius:var(--radius-sm);margin:0 0 10px;overflow:hidden}
+.subgroup-head{display:flex;justify-content:space-between;align-items:center;padding:11px 13px;background:#f9fbfd;cursor:pointer;transition:background .12s}
+.subgroup-head:hover{background:#f1f5f9}
+.subgroup-head strong{font-size:14.5px;color:#304c70}
+.subchev{font-size:13px;color:var(--brand-red);transition:transform .18s}
+.subgroup.open .subchev{transform:rotate(90deg)}
+.subgroup-body{display:none}
+.subgroup.open .subgroup-body{display:block}
+
+/* ============ Price table ============ */
+.table-wrap{overflow-x:auto;max-width:100%}
+.price-table{width:100%;min-width:560px;border-collapse:collapse;table-layout:fixed}
+.price-table th,.price-table td{padding:10px 9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+.price-table th{background:var(--soft);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;color:#586575;font-weight:800}
+.price-table tr:last-child td{border-bottom:0}
+.price-table tbody tr{transition:background .12s}
+.price-table tbody tr:hover{background:#f9fbfd}
+.num{text-align:right!important;white-space:nowrap}
+.qty,.price{width:110px;text-align:right}
+.unit{width:90px}
+.saveprice{font-size:11.5px;color:var(--muted);margin-top:3px}
+.manual{color:var(--brand-red);font-size:11.5px}
+.row-on{background:#fff8f9;box-shadow:inset 3px 0 0 var(--brand-red)}
+.row-off{opacity:.6}
+.price-table th:nth-child(1),.price-table td:nth-child(1){width:44%}
+.price-table th:nth-child(2),.price-table td:nth-child(2){width:14%}
+.price-table th:nth-child(3),.price-table td:nth-child(3){width:16%}
+.price-table th:nth-child(4),.price-table td:nth-child(4){width:13%}
+.price-table th:nth-child(5),.price-table td:nth-child(5){width:13%}
+.price-table td:first-child{overflow-wrap:anywhere}
+
+/* ============ Selected items summary ============ */
+.selected{padding:0 18px 18px}
+.selected h3{font-size:14.5px;margin:14px 0 9px;color:var(--brand-blue-deep);font-weight:800}
+.selected table{width:100%;border-collapse:collapse}
+.selected th,.selected td{padding:9px;border-bottom:1px solid var(--line);font-size:13px;text-align:left}
+.selected th{background:var(--soft);color:#5c6875;font-weight:700}
+.pill{display:inline-block;padding:4px 9px;border-radius:999px;background:#eef2f6;color:#4f5b67;font-size:11px;font-weight:700}
+.service-label{margin:14px 18px 0;padding:9px 11px;border-radius:var(--radius-sm);background:#f3f6fa;color:var(--brand-blue-deep);font-size:13px;font-weight:800}
+.estimate-total{display:flex;justify-content:space-between;gap:12px;padding:14px 18px 18px;border-top:1px solid var(--line);font-size:15px}
+.estimate-total b{font-size:19px;color:var(--brand-blue-deep)}
+
+/* ============ Итог / скидки ============ */
+.summary-grid{display:grid;grid-template-columns:1fr 560px;gap:22px}
+.summary-note{color:#303b48;font-size:14px;padding-top:2px}
+.summary-note h2{font-weight:800;color:var(--brand-blue-deep)}
+.summary-note .note{color:#4b5663}
+.totals{background:#fff;border:1px solid var(--line);border-radius:var(--radius-md);padding:20px}
+.line{display:flex;justify-content:space-between;gap:20px;padding:6px 0;font-size:15px}
+.discount-box{border:1px solid var(--line);border-radius:var(--radius-md);padding:14px;margin:12px 0;background:#fbfcfe;border-left:3px solid var(--brand-blue)}
+.discount-title{font-size:13px;font-weight:800;margin-bottom:8px;color:var(--brand-blue-deep)}
+.discount-grid{display:grid;grid-template-columns:1.45fr .55fr;gap:10px}
+.discount-help{font-size:12px;color:var(--muted);margin-top:7px}
+.ok{color:var(--green)}
+.warn{color:var(--brand-red)}
+.grand{border-top:2px solid var(--brand-blue-deep);margin-top:14px;padding-top:15px;font-size:24px;font-weight:900;color:var(--brand-blue-deep)}
+
+/* ============ Actions / link / toast ============ */
+.actions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:16px}
+.linkbox{display:none;margin-top:12px;padding:14px 16px;border-radius:var(--radius-md);background:#f3f8fc;border:1px solid #cad9e8;font-size:14px}
+.linkbox.show{display:block;position:fixed;right:24px;top:92px;z-index:45;width:min(520px,calc(100vw - 48px));margin:0;box-shadow:var(--shadow-lg);border-radius:13px}
+.linkbox b{color:var(--brand-blue-deep);display:block;margin-bottom:5px}
+.linkbox a{word-break:break-all;color:var(--brand-blue);font-weight:600}
+.linkbox .btn{float:right;margin-top:7px}
+.toast{display:none;position:fixed;right:22px;bottom:22px;z-index:50;max-width:min(420px,calc(100vw - 32px));padding:13px 16px;border-radius:var(--radius-md);background:var(--brand-blue-deep);color:#fff;box-shadow:var(--shadow-lg);font-size:14px;font-weight:700}
+.toast.show{display:block}
+.toast.err{background:var(--brand-red-dark)}
+
+/* ============ История расчётов ============ */
+.history-tools{display:flex;gap:10px}
+.history-tools input{flex:1}
+/* Контейнер таблицы истории всегда ограничен шириной своей карточки —
+   как и остальные блоки; при нехватке места скроллится только сама
+   таблица внутри своей карточки, а не вся страница. */
+.history{width:100%;max-width:100%;overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius-sm);margin-top:22px;background:#fff}
+.history table{width:100%;min-width:960px;border-collapse:collapse}
+.history th,.history td{padding:11px 10px;border-bottom:1px solid var(--line);font-size:13px;text-align:left}
+.history th{background:var(--soft);color:#4d5966;font-weight:700;user-select:none}
+.history th.sortable{cursor:pointer;transition:background .15s,color .15s}
+.history th.sortable:hover{background:#eef3f8;color:var(--brand-blue-deep)}
+.history th.sortable::after{content:"";display:inline-block;margin-left:6px;border:4px solid transparent;border-top-color:#aab3bd;transform:translateY(2px)}
+.history th.sortable.asc::after{border-top-color:var(--brand-red);border-bottom-color:transparent}
+.history th.sortable.desc::after{border-top-color:transparent;border-bottom-color:var(--brand-red);transform:translateY(-2px)}
+.history th.actions-col,.history td.actions-col{text-align:right;white-space:nowrap}
+.history td.actions-col .btn{margin-left:6px}
+.history td:first-child strong{font-weight:900}
+.history tr:last-child td{border-bottom:0}
+.history tbody tr:hover{background:#f9fbfd}
+.empty{text-align:center;color:#888;padding:24px}
+
+/* ============ Responsive ============ */
+@media(max-width:1180px){
+  .wrap{max-width:1500px}
+  .estimate-wrap{grid-template-columns:1fr}
+  .grid4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .summary-grid{grid-template-columns:1fr}
+  .totals{max-width:none}
+}
+@media(max-width:700px){
+  body{font-size:16px}
+  .wrap{padding:12px 10px 36px}
+  .topbar{padding:12px 13px;border-radius:14px;margin-bottom:14px}
+  .brand-logo{width:38px;height:38px}
+  .brandname strong{font-size:15px}
+  .brandname span{font-size:10px}
+  .top{align-items:flex-start;flex-direction:column;gap:8px;margin-bottom:14px}
+  .top h1{font-size:26px}
+  .top p{font-size:13.5px}
+  .card{border-radius:14px;margin-bottom:14px}
+  .card-head{padding:14px}
+  .card-head h2{font-size:16.5px}
+  .card-pad{padding:14px}
+  .grid4,.discount-grid{grid-template-columns:1fr}
+  .estimate-wrap{padding:14px 8px 9px;gap:10px}
+  .estimate{border-radius:12px}
+  .estimate-head{padding:13px}
+  .estimate-head h2{font-size:17px}
+  .price-list{padding-left:10px;padding-right:10px}
+  .price-table{min-width:0}
+  .price-table,.price-table tbody,.price-table tr,.price-table td{display:block;width:100%}
+  .price-table thead{display:none}
+  .price-table tr{padding:10px 0;border-bottom:1px solid var(--line)}
+  .price-table tr:last-child{border-bottom:0}
+  .price-table td{border:0;padding:4px 0}
+  .price-table td:first-child{font-weight:650;padding-bottom:7px}
+  .price-table td:nth-child(2),.price-table td:nth-child(3),.price-table td:nth-child(4),.price-table td:nth-child(5){display:grid;grid-template-columns:1fr 130px;align-items:center;gap:10px}
+  .price-table td:nth-child(2):before{content:"Ед.";color:#777;font-size:12px}
+  .price-table td:nth-child(3):before{content:"Цена";color:#777;font-size:12px}
+  .price-table td:nth-child(4):before{content:"Количество";color:#777;font-size:12px}
+  .price-table td:nth-child(5):before{content:"Сумма";color:#777;font-size:12px}
+  .price-table td.num{text-align:left!important}
+  .qty,.price,.unit{width:100%}
+  .selected{overflow:hidden}
+  .selected .table-wrap{overflow-x:auto}
+  .selected table{min-width:680px}
+  .actions{justify-content:stretch}
+  .actions .btn{flex:1 1 100%;min-height:46px}
+  .linkbox.show{right:12px;top:78px;width:calc(100vw - 24px)}
+  .linkbox .btn{margin:9px 0 0!important;width:100%}
+  .history-tools{flex-direction:column}
+  .history{margin-top:20px}
+  .history table{min-width:860px}
+  .toast{right:16px;bottom:16px}
+  .estimate-total{font-size:15px}
+  .grand{font-size:21px}
+}
+</style>
+</head>
+<body>
+<div id="toast" class="toast"></div>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brandmark"><div class="brand-logo">№1</div><div class="brandname"><span>натяжные потолки</span><strong>Потолочная №1</strong></div></div>
+    <div class="topbar-right"><div id="status" class="status"></div><a class="btn small ghost" href="/logout">Выйти</a></div>
+  </div>
+  <div class="top"><div><h1>Калькулятор тарифов</h1><p>Расчёт потолков и освещения в одной смете. Позиции добавляются автоматически по количеству.</p></div></div>
+
+  <div class="card">
+    <div class="card-head"><div><h2>1. Клиент</h2><div class="meta">Минимум — имя клиента. Остальные поля необязательные.</div></div></div>
+    <div class="card-pad"><div class="grid4">
+      <div class="field"><label>Имя клиента</label><input id="clientName" placeholder="Иван Иванов"></div>
+      <div class="field"><label>Телефон</label><input id="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+7 (999) 123-45-67"></div>
+      <div class="field"><label>Адрес объекта</label><input id="address" placeholder="Адрес"></div>
+      <div class="field"><label>Менеджер</label><input id="manager" placeholder="Имя менеджера"></div>
+      <div class="field full"><label>Комментарий</label><textarea id="notes" placeholder="Особенности объекта, договорённости и т.п."></textarea></div>
+    </div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><div><h2>2. Расчёт</h2><div class="meta">Количество 0 означает, что позиция не входит в расчёт. Цены и единицы можно менять прямо здесь.</div></div><button id="toggleAllBtn" class="btn small ghost" onclick="toggleAll()">Раскрыть всё</button></div>
+    <div class="estimate-wrap">
+      <section class="estimate">
+        <div class="estimate-head"><h2>Услуги</h2><p>Потолки, профиль, монтаж, освещение и другие работы.</p></div>
+        <div id="priceListServices" class="price-list"></div><div id="selectedServices" class="selected"></div>
+        <div class="estimate-total"><span>Стоимость услуг</span><b id="servicesSubtotal">0 ₽</b></div>
+      </section>
+
+      <section class="estimate">
+        <div class="estimate-head"><h2>Товары</h2><p>LED, блоки питания, светильники и лампы.</p></div>
+        <div id="priceListProducts" class="price-list"></div><div id="selectedProducts" class="selected"></div>
+        <div class="estimate-total"><span>Стоимость товаров</span><b id="productsSubtotal">0 ₽</b></div>
+      </section>
+    </div>
+  </div>
+
+  <div class="card card-pad">
+    <div class="summary-grid">
+      <div class="summary-note">
+        <h2 style="margin:0 0 7px;font-size:17px">3. Итог и скидки</h2>
+        <div>Скидка на услуги (потолки и освещение вместе) и скидка на товары считаются независимо друг от друга.</div>
+        <div style="margin-top:10px;max-width:300px" class="field"><label>Площадь объекта, м²</label><input id="area" type="number" min="0" step=".01" placeholder="Например, 82"></div>
+        <div class="note" style="margin-top:10px">Площадь необязательна. Если она заполнена, можно использовать её как справочную информацию.</div>
+      </div>
+
+      <div class="totals">
+        <div class="discount-box">
+          <div class="discount-title">Скидка на услуги</div>
+          <div class="discount-grid"><div class="field"><label>Тип скидки</label><select id="servicesDiscountType" onchange="discountChanged('services')"><option value="none">Без скидки</option><option value="area80">При заказе от 80 м² — 15%</option><option value="measurement">Скидка в день замера — 10%</option><option value="newcomer">Специальная цена новосёлам и пенсионерам — 10%</option><option value="custom">Скидка, %</option><option value="fixed">Скидка, ₽</option></select></div><div class="field"><label id="servicesDiscountLabel">Размер</label><input id="servicesDiscountValue" type="number" min="0" step=".01" value="0" disabled oninput="recalc()"></div></div>
+          <div id="servicesDiscountHelp" class="discount-help"></div>
+          <div class="field" style="margin-top:8px"><label>Комментарий</label><input id="servicesDiscountReason" placeholder="Необязательно"></div>
+          <div class="line"><span>Скидка</span><b id="servicesDiscountAmount">0 ₽</b></div>
+        </div>
+
+        <div class="discount-box">
+          <div class="discount-title">Скидка на товары</div>
+          <div class="discount-grid"><div class="field"><label>Тип скидки</label><select id="productsDiscountType" onchange="discountChanged('products')"><option value="none">Без скидки</option><option value="measurement">Скидка в день замера — 10%</option><option value="newcomer">Специальная цена новосёлам и пенсионерам — 10%</option><option value="custom">Скидка, %</option><option value="fixed">Скидка, ₽</option></select></div><div class="field"><label id="productsDiscountLabel">Размер</label><input id="productsDiscountValue" type="number" min="0" step=".01" value="0" disabled oninput="recalc()"></div></div>
+          <div id="productsDiscountHelp" class="discount-help"></div>
+          <div class="field" style="margin-top:8px"><label>Комментарий</label><input id="productsDiscountReason" placeholder="Необязательно"></div>
+          <div class="line"><span>Скидка</span><b id="productsDiscountAmount">0 ₽</b></div>
+        </div>
+
+        <div class="line"><span>Услуги после скидки</span><b id="servicesTotal">0 ₽</b></div>
+        <div class="line"><span>Товары после скидки</span><b id="productsTotal">0 ₽</b></div>
+        <div class="line grand"><span>Итого</span><span id="grandTotal">0 ₽</span></div>
+      </div>
+    </div>
+    </div>
+    <div class="actions"><button class="btn ghost" onclick="newCalc()">Новый расчёт</button><button class="btn ghost" onclick="saveCalculation()">Сохранить расчёт</button><button class="btn red" onclick="saveAndShowLink()">Сформировать КП</button></div>
+    <div id="linkbox" class="linkbox"><b>Ссылка на КП:</b> <a id="kpLink" target="_blank"></a> <button class="btn small ghost" style="margin-left:8px" onclick="copyLink()">Копировать</button></div>
+
+  <div class="card">
+    <div class="card-head"><div><h2>База расчётов</h2><div class="meta">Поиск по клиенту, телефону, адресу, менеджеру или номеру.</div></div></div>
+    <div class="card-pad"><div class="history-tools"><input id="search" placeholder="Поиск расчёта..." oninput="debouncedHistory()"><button class="btn small ghost" onclick="loadHistory()">Обновить</button></div><div class="history"><table><thead><tr><th class="sortable" data-sort="id" onclick="sortHistory('id')">ID</th><th class="sortable" data-sort="created_at" onclick="sortHistory('created_at')">Дата</th><th class="sortable" data-sort="client_name" onclick="sortHistory('client_name')">Клиент</th><th class="sortable" data-sort="phone" onclick="sortHistory('phone')">Телефон</th><th class="sortable" data-sort="address" onclick="sortHistory('address')">Адрес</th><th class="sortable" data-sort="manager" onclick="sortHistory('manager')">Менеджер</th><th class="sortable num" data-sort="total" onclick="sortHistory('total')">Итого</th><th class="actions-col">Действия</th></tr></thead><tbody id="historyBody"><tr><td colspan="8" class="empty">Загрузка...</td></tr></tbody></table></div></div>
+  </div>
+</div>
+<script>
+let priceSections=[],items=[],currentId=null,historyTimer=0,saveTimer=0,toastTimer=0,historySort={key:'created_at',dir:'desc'};
+const $=id=>document.getElementById(id);
+const num=v=>{const n=Number(String(v??'').replace(',','.'));return Number.isFinite(n)?n:0};
+const fmt=v=>new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}).format(num(v))+' ₽';
+const plain=v=>new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}).format(num(v));
+const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+async function api(url,opt){const r=await fetch(url,opt);if(!r.ok){const e=await r.json().catch(()=>({error:'Ошибка'}));throw new Error(e.error||'Ошибка запроса')}return r.json()}
+function setStatus(t,err=false){$('status').textContent=t;$('status').className='status'+(err?' err':'');clearTimeout(saveTimer);saveTimer=setTimeout(()=>{$('status').textContent=''},5000)}
+function showToast(t,err=false){const el=$('toast');el.textContent=t;el.className='toast show'+(err?' err':'');clearTimeout(toastTimer);toastTimer=setTimeout(()=>{el.className='toast'},4200)}
+async function init(){priceSections=await api('/api/prices');renderPrices();loadHistory();discountChanged('services');discountChanged('products')}
+function sections(group){return group==='services'?priceSections.filter(s=>s.calcGroup==='ceiling'||s.calcGroup==='lighting'):priceSections.filter(s=>s.calcGroup===group)}
+function renderPrices(){renderGroup('services',$('priceListServices'));renderGroup('products',$('priceListProducts'));}
+function renderGroup(group,root){root.innerHTML='';sections(group).forEach(s=>{const sec=document.createElement('div');sec.className='section';sec.dataset.sid=s.id;sec.innerHTML=`<div class="section-head" onclick="toggleSection(this.parentElement)"><div class="left"><div class="chev">›</div><div><div class="section-title">${esc(s.name)}</div><div class="section-count">${s.items.length} позиций</div></div></div></div><div class="section-body"></div>`;const body=sec.querySelector('.section-body');if(s.items.some(it=>it.group)){const grouped={};s.items.forEach(it=>{(grouped[it.group||it.name]??=[]).push(it)});Object.entries(grouped).forEach(([name,arr])=>body.appendChild(renderSubgroup(name,arr)))}else body.appendChild(renderTable(s.items,group));root.appendChild(sec)})}
+function renderSubgroup(name,arr){const g=document.createElement('div');g.className='subgroup';g.innerHTML=`<div class="subgroup-head" onclick="this.parentElement.classList.toggle('open')"><strong>${esc(name)}</strong><span class="subchev">›</span></div><div class="subgroup-body"></div>`;g.querySelector('.subgroup-body').appendChild(renderTable(arr));return g}
+function renderTable(arr){const wrap=document.createElement('div');wrap.className='table-wrap';wrap.innerHTML='<table class="price-table"><thead><tr><th>Позиция / ширина</th><th class="unit">Ед.</th><th class="num">Цена, ₽</th><th class="num">Количество</th><th class="num">Сумма</th></tr></thead><tbody></tbody></table>';const tb=wrap.querySelector('tbody');arr.forEach(it=>{const tr=document.createElement('tr');tr.id='row-'+it.id;tr.innerHTML=`<td><div>${esc(it.name)}</div><div class="saveprice" id="note-${it.id}"></div></td><td><input class="unit" id="unit-${it.id}" value="${esc(it.unit)}" onchange="updatePrice(${it.id})"></td><td class="num"><input class="price" id="price-${it.id}" value="${it.price??''}" placeholder="${it.price==null?'введите':''}" type="number" min="0" step=".01" onchange="updatePrice(${it.id})"></td><td class="num"><input class="qty" id="qty-${it.id}" value="0" type="number" min="0" step=".01" inputmode="decimal" oninput="qtyChanged(${it.id})"></td><td class="num" id="sum-${it.id}">0 ₽</td>`;tb.appendChild(tr)});return wrap}
+function toggleSection(sec){sec.classList.toggle('open')}
+function toggleAll(){const btn=$('toggleAllBtn');const shouldOpen=btn.dataset.state!=='open';document.querySelectorAll('.section').forEach(x=>x.classList.toggle('open',shouldOpen));document.querySelectorAll('.subgroup').forEach(x=>x.classList.toggle('open',shouldOpen));btn.dataset.state=shouldOpen?'open':'closed';btn.textContent=shouldOpen?'Скрыть всё':'Раскрыть всё'}
+function findItem(id){for(const s of priceSections){const it=s.items.find(x=>x.id===id);if(it)return {...it,section:s.name,calc_group:s.calcGroup}}return null}
+async function updatePrice(id){const it=findItem(id);if(!it)return;const priceEl=$('price-'+id),unitEl=$('unit-'+id);const price=priceEl.value===''?null:num(priceEl.value);try{await api('/api/prices/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({price,unit:unitEl.value.trim()||'шт'})});it.price=price;it.unit=unitEl.value.trim()||'шт';$('note-'+id).innerHTML=price==null?'<span class="manual">Цена не задана — введите вручную.</span>':'<span>Цена сохранена</span>';qtyChanged(id);showToast('Цена сохранена')}catch(e){showToast(e.message,true)}}
+function qtyChanged(id){const it=findItem(id);if(!it)return;const q=num($('qty-'+id).value);const row=$('row-'+id);const p=$('price-'+id).value===''?0:num($('price-'+id).value);$('sum-'+id).textContent=fmt(q*p);row.classList.toggle('row-on',q>0);row.classList.toggle('row-off',q===0);const idx=items.findIndex(x=>x.price_item_id===id);if(q>0&&p>0){const data={id:idx>=0?items[idx].id:Date.now()+Math.random(),price_item_id:id,section:it.section,calc_group:it.calc_group,name:it.name,unit:$('unit-'+id).value.trim()||it.unit,price:p,qty:q};if(idx>=0)items[idx]=data;else items.push(data)}else if(idx>=0)items.splice(idx,1);renderSelected();recalc()}
+function renderSelected(){renderSelectedGroup('services',$('selectedServices'));renderSelectedGroup('products',$('selectedProducts'))}
+function itemBelongsToGroup(item,group){return group==='services'?(item.calc_group==='ceiling'||item.calc_group==='lighting'):item.calc_group===group}
+function renderSelectedGroup(group,box){const groupItems=items.filter(x=>itemBelongsToGroup(x,group));if(!groupItems.length){box.innerHTML='';return}box.innerHTML='<h3>В расчёт вошло</h3><div class="table-wrap"><table class="selected-table"><thead><tr><th>Позиция</th><th>Ед.</th><th class="num">Кол-во</th><th class="num">Цена</th><th class="num">Сумма</th></tr></thead><tbody>'+groupItems.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.unit)}</td><td class="num">${plain(x.qty)}</td><td class="num">${fmt(x.price)}</td><td class="num"><b>${fmt(x.qty*x.price)}</b></td></tr>`).join('')+'</tbody></table></div>'}
+function groupSubtotal(group){return items.filter(x=>itemBelongsToGroup(x,group)).reduce((s,x)=>s+x.qty*x.price,0)}
+function getDiscount(group){const sub=groupSubtotal(group),t=$(`${group}DiscountType`).value,v=num($(`${group}DiscountValue`).value);let a=0;if(t==='area80')a=sub*.15;else if(t==='measurement'||t==='newcomer')a=sub*.10;else if(t==='custom')a=sub*Math.min(Math.max(v,0),100)/100;else if(t==='fixed')a=Math.min(Math.max(v,0),sub);return Math.min(Math.max(a,0),sub)}
+function recalc(){const ss=groupSubtotal('services'),ps=groupSubtotal('products'),sd=getDiscount('services'),pd=getDiscount('products');$('servicesSubtotal').textContent=fmt(ss);$('productsSubtotal').textContent=fmt(ps);$('servicesDiscountAmount').textContent=fmt(sd);$('productsDiscountAmount').textContent=fmt(pd);$('servicesTotal').textContent=fmt(ss-sd);$('productsTotal').textContent=fmt(ps-pd);$('grandTotal').textContent=fmt(ss+ps-sd-pd);renderSelected()}
+function discountChanged(group){const v=$(`${group}DiscountValue`),t=$(`${group}DiscountType`).value,l=$(`${group}DiscountLabel`),h=$(`${group}DiscountHelp`);v.disabled=false;l.textContent=t==='fixed'?'Размер, ₽':'Размер, %';if(t==='none'){v.value=0;v.disabled=true;h.textContent=''}else if(t==='area80'){v.value=15;v.disabled=true;h.innerHTML='<span class="ok">Скидка 15% применяется по выбранному пресету. Площадь указывать необязательно.</span>'}else if(t==='measurement'){v.value=10;v.disabled=true;h.textContent='Скидка в день замера — 10%.'}else if(t==='newcomer'){v.value=10;v.disabled=true;h.textContent='Специальная цена новосёлам и пенсионерам — 10%.'}else if(t==='custom'){h.textContent='Введите процент скидки вручную.'}else if(t==='fixed'){h.textContent='Введите фиксированную сумму скидки.'}recalc()}
+function payload(){const subtotal=groupSubtotal('services')+groupSubtotal('products'),sd=getDiscount('services'),pd=getDiscount('products');return{client_name:$('clientName').value.trim()||'Без имени',phone:$('phone').value.trim(),address:$('address').value.trim(),manager:$('manager').value.trim(),notes:$('notes').value.trim(),area:num($('area').value),items,discount:{services:{type:$('servicesDiscountType').value,value:num($('servicesDiscountValue').value),reason:$('servicesDiscountReason').value.trim()},products:{type:$('productsDiscountType').value,value:num($('productsDiscountValue').value),reason:$('productsDiscountReason').value.trim()}},subtotal,discount_amount:sd+pd,total:subtotal-sd-pd}}
+async function persistCalculation(){const p=payload();if(!items.length){showToast('Добавьте хотя бы одну позицию количеством больше 0.',true);return null}const method=currentId?'PUT':'POST';const r=await api(currentId?'/api/calculations/'+currentId:'/api/calculations',{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});currentId=r.id;showLink(r.url);await loadHistory();return r}
+async function saveCalculation(){try{const r=await persistCalculation();if(r)showToast(`Расчёт №${r.id} сохранён`)}catch(e){showToast(e.message,true)}}
+async function saveAndShowLink(){try{const r=await persistCalculation();if(r)showToast(`КП №${r.id} сформировано и сохранено`)}catch(e){showToast(e.message,true)}}
+function showLink(url){$('kpLink').textContent=url;$('kpLink').href=url;$('linkbox').classList.add('show')}
+async function copyLink(){const url=$('kpLink').textContent;if(!url)return;try{await navigator.clipboard.writeText(url);showToast('Ссылка на КП скопирована')}catch{const ta=document.createElement('textarea');ta.value=url;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();showToast('Ссылка на КП скопирована')}}
+function clearInputState(){for(const p of priceSections)for(const it of p.items){const q=$('qty-'+it.id);if(q)q.value=0;const sum=$('sum-'+it.id);if(sum)sum.textContent='0 ₽';const row=$('row-'+it.id);if(row){row.classList.remove('row-on');row.classList.add('row-off')}}}
+function newCalc(){if(!confirm('Начать новый расчёт?'))return;currentId=null;items=[];['clientName','phone','address','manager','notes','servicesDiscountReason','productsDiscountReason','area'].forEach(id=>$(id).value='');$('servicesDiscountType').value='none';$('productsDiscountType').value='none';$('servicesDiscountValue').value=0;$('productsDiscountValue').value=0;$('linkbox').classList.remove('show');clearInputState();discountChanged('services');discountChanged('products');renderSelected();recalc();showToast('Создан новый расчёт')}
+function historyCompare(a,b,key){const av=a?.[key]??'',bv=b?.[key]??'';if(key==='total'||key==='id')return Number(av)-Number(bv);if(key==='created_at'){const ad=Date.parse(av)||0,bd=Date.parse(bv)||0;return ad-bd}return String(av).localeCompare(String(bv),'ru',{numeric:true,sensitivity:'base'})}
+function sortHistory(key){if(historySort.key===key)historySort.dir=historySort.dir==='asc'?'desc':'asc';else{historySort.key=key;historySort.dir='asc'}loadHistory()}
+function updateHistorySortUI(){document.querySelectorAll('.history th.sortable').forEach(th=>{th.classList.remove('asc','desc');if(th.dataset.sort===historySort.key)th.classList.add(historySort.dir)})}
+async function loadHistory(){try{const q=encodeURIComponent($('search').value.trim());let rows=await api('/api/calculations?q='+q);rows.sort((a,b)=>{const c=historyCompare(a,b,historySort.key);return historySort.dir==='asc'?c:-c});updateHistorySortUI();$('historyBody').innerHTML=rows.length?rows.map(r=>`<tr><td><strong>${r.id}</strong></td><td>${esc(r.created_at)}</td><td>${esc(r.client_name)}</td><td>${esc(r.phone||'')}</td><td>${esc(r.address||'')}</td><td>${esc(r.manager||'')}</td><td class="num"><b>${fmt(r.total)}</b></td><td class="actions-col"><button class="btn small ghost" onclick="openCalc(${r.id})">Открыть</button><button class="btn small danger" onclick="delCalc(${r.id})">Удалить</button></td></tr>`).join(''):'<tr><td colspan="8" class="empty">Расчётов пока нет.</td></tr>'}catch(e){setStatus(e.message,true);showToast(e.message,true)}}
+function debouncedHistory(){clearTimeout(historyTimer);historyTimer=setTimeout(loadHistory,200)}
+async function openCalc(id){try{const d=await api('/api/calculations/'+id);currentId=id;$('clientName').value=d.client_name||'';$('phone').value=d.phone||'';$('address').value=d.address||'';$('manager').value=d.manager||'';$('notes').value=d.notes||'';$('area').value=d.area||'';items=d.items||[];clearInputState();for(const x of items){const q=$('qty-'+x.price_item_id);if(q)q.value=x.qty}const legacyCeiling=d.discount?.ceiling,legacyLighting=d.discount?.lighting;const ds=(d.discount?.services&&d.discount.services.type!=='none')?d.discount.services:((legacyCeiling&&legacyCeiling.type!=='none')?legacyCeiling:((legacyLighting&&legacyLighting.type!=='none')?legacyLighting:(d.discount?.services||{type:'none',value:0,reason:''})));const dp=d.discount?.products||{type:'none',value:0,reason:''};$('servicesDiscountType').value=ds.type||'none';$('servicesDiscountValue').value=ds.value??0;$('servicesDiscountReason').value=ds.reason||'';$('productsDiscountType').value=dp.type||'none';$('productsDiscountValue').value=dp.value??0;$('productsDiscountReason').value=dp.reason||'';discountChanged('services');discountChanged('products');showLink(location.origin+'/kp/'+id);renderSelected();recalc();showToast(`Расчёт №${id} открыт`);window.scrollTo({top:0,behavior:'smooth'})}catch(e){showToast(e.message,true)}}
+async function delCalc(id){if(!confirm('Удалить расчёт №'+id+'?'))return;try{await api('/api/calculations/'+id,{method:'DELETE'});if(currentId===id){currentId=null;items=[];clearInputState();renderSelected();recalc();$('linkbox').classList.remove('show')}await loadHistory();showToast(`Расчёт №${id} удалён`)}catch(e){showToast(e.message,true)}}
+$('area').addEventListener('input',recalc);
+init().catch(e=>{setStatus(e.message,true);showToast(e.message,true)});
+</script>
+</body></html>

@@ -13,6 +13,5 @@ xn--j1ak.xn--1-7sb6aidabe2a7c4e.xn--p1ai {
         -Server
     }
 
-    reverse_proxy app:80
+    reverse_proxy app:3000
 }
-

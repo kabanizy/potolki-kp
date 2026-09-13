@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Potolki KP database backup
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+Persistent=true
+RandomizedDelaySec=15min
+
+[Install]
+WantedBy=timers.target
+

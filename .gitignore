@@ -1,3 +1,7 @@
 .env
 *.log
+data/
+backups/
+data.sqlite*
+node_modules/
 
