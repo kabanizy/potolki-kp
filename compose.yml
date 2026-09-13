@@ -11,6 +11,7 @@ services:
     environment:
       PORT: "3000"
       DB_PATH: /data/data.sqlite
+      PUBLIC_BASE_URL: https://kp.potolochnaya1.ru
     read_only: true
     tmpfs:
       - /tmp

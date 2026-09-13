@@ -6,6 +6,7 @@ const { DatabaseSync } = require('node:sqlite');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data.sqlite');
+const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
 const db = new DatabaseSync(DB_PATH, { open: true });
 
 app.disable('x-powered-by');
@@ -121,6 +122,11 @@ function requireSharedLogin(req, res, next) {
   if (isLoggedIn(req)) return next();
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Требуется авторизация' });
   res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
+}
+
+function publicKpUrl(req, id) {
+  const base = PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+  return `${base}/kp/${id}`;
 }
 
 const seed = [
@@ -284,7 +290,7 @@ app.get('/api/calculations/:id',(req,res)=>{
   ensureDbOpen();
   const r=getCalc(Number(req.params.id));
   if(!r) return res.status(404).json({error:'Расчёт не найден'});
-  res.json(r);
+  res.json({...r,url:publicKpUrl(req,r.id)});
 });
 
 function discountAmount(subtotal, d, area){
@@ -342,14 +348,14 @@ app.post('/api/calculations',(req,res)=>{
   const p=normalize(req.body||{});
   const x=db.prepare(`INSERT INTO calculations(client_name,phone,address,manager,notes,area,items_json,discount_json,subtotal,discount_amount,total) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(p.client_name,p.phone,p.address,p.manager,p.notes,p.area,JSON.stringify(p.items),JSON.stringify(p.discount),p.subtotal,p.discount_amount,p.total);
   const id=Number(x.lastInsertRowid);
-  res.status(201).json({id,url:`${req.protocol}://${req.get('host')}/kp/${id}`});
+  res.status(201).json({id,url:publicKpUrl(req,id)});
 });
 app.put('/api/calculations/:id',(req,res)=>{
   ensureDbOpen();
   const id=Number(req.params.id),p=normalize(req.body||{});
   const x=db.prepare(`UPDATE calculations SET client_name=?,phone=?,address=?,manager=?,notes=?,area=?,items_json=?,discount_json=?,subtotal=?,discount_amount=?,total=?,updated_at=datetime('now','localtime') WHERE id=?`).run(p.client_name,p.phone,p.address,p.manager,p.notes,p.area,JSON.stringify(p.items),JSON.stringify(p.discount),p.subtotal,p.discount_amount,p.total,id);
   if(!x.changes) return res.status(404).json({error:'Расчёт не найден'});
-  res.json({id,url:`${req.protocol}://${req.get('host')}/kp/${id}`});
+  res.json({id,url:publicKpUrl(req,id)});
 });
 app.delete('/api/calculations/:id',(req,res)=>{
   ensureDbOpen();
@@ -428,58 +434,32 @@ function cpHtml(c){
   const brandRed='#c8102e', brandBlue='#1f477d', ink='#172335';
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>Коммерческое предложение — ${esc(c.client_name)}</title><style>
 *{box-sizing:border-box}
-@page{size:A4;margin:12mm 10mm 14mm}
+@page{size:A4;margin:8mm 7mm 9mm}
 html{background:#edf1f5}
-body{margin:0;background:#edf1f5;color:${ink};font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;font-size:16px;line-height:1.45}
-.page{width:min(1120px,calc(100% - 32px));margin:28px auto 44px;background:#fff;border:1px solid #dce2e9;border-radius:18px;box-shadow:0 18px 48px rgba(31,55,83,.10);overflow:hidden}
-.hero{padding:30px 38px 26px;background:linear-gradient(135deg,#fff 0%,#f7f9fb 100%);border-bottom:1px solid #e1e6ed}
-.brand-row{display:flex;align-items:center;justify-content:space-between;gap:20px}.brand{font-size:19px;font-weight:850;color:${brandRed};letter-spacing:.01em}.brand-sub{margin-top:2px;font-size:12px;color:#687484}.badge{padding:7px 11px;border-radius:999px;background:#eef3f8;color:${brandBlue};font-size:12px;font-weight:750}.title{margin:18px 0 5px;font-size:34px;line-height:1.12;font-weight:850;letter-spacing:-.025em;color:${brandBlue}}.meta{font-size:13px;color:#687483}
-.content{padding:0 38px 38px}.client{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;padding:16px 17px;margin-top:22px;background:#f5f7fa;border:1px solid #e1e6ed;border-radius:13px}.client div{min-width:0;overflow-wrap:anywhere}.client b{display:block;margin-bottom:4px;font-size:10px;line-height:1.2;text-transform:uppercase;letter-spacing:.07em;color:#737f8c}.client div:not(:has(b)){color:${ink};font-weight:550}
-.estimate-section{margin-top:32px;break-inside:auto}.section-title{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;padding:0 0 10px;margin-bottom:12px;border-bottom:2px solid ${brandBlue};font-size:21px;line-height:1.2;font-weight:850;color:${brandBlue}}.section-title b{font-size:20px;white-space:nowrap;color:${brandRed}}
-.sub-block{margin-bottom:16px}.sub-block:last-of-type{margin-bottom:0}.sub-title{font-size:13px;font-weight:750;color:#566271;margin-bottom:7px}
-.table-shell{width:100%;overflow:hidden;border:1px solid #dfe5eb;border-radius:11px}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{padding:8px 7px;border-bottom:1px solid #e8ecf0;text-align:left;vertical-align:top;overflow-wrap:anywhere;word-break:normal;font-size:12px}th{background:#f2f5f8;color:#566271;font-weight:750;white-space:nowrap}tbody tr:nth-child(even){background:#fbfcfd}tbody tr:last-child td{border-bottom:0}.r{text-align:right;white-space:nowrap}.strong{font-weight:750}.c-section{width:11%}.c-item{width:38%}.c-unit{width:7%}.c-qty{width:9%}.c-price{width:16%}.c-sum{width:19%}
-.mini{width:min(470px,100%);margin:11px 0 0 auto;padding:10px 13px;border:1px solid #e1e6ed;border-radius:10px;background:#fafbfd}.mini>div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;padding:4px 0;color:#505c69;font-size:13px;align-items:start}.mini b{color:${ink}}.mini .discount-line{color:${brandRed}}.mini .discount-line b{color:${brandRed}}.mini .comment-line{border-top:1px dashed #dfe4e9;margin-top:4px;padding-top:8px}.mini .comment-line span:last-child{max-width:260px;text-align:right;overflow-wrap:anywhere}
-.grand{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-top:30px;padding:18px 20px;border-radius:13px;background:${brandBlue};color:#fff;font-size:23px;line-height:1.2;font-weight:850;break-inside:avoid}.grand span:last-child{font-size:25px;white-space:nowrap}.note{margin-top:15px;padding:12px 14px;border-left:4px solid ${brandRed};border-radius:0 9px 9px 0;background:#fafbfd;color:#596573;font-size:12.5px;break-inside:avoid}
+body{margin:0;background:#edf1f5;color:${ink};font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;font-size:10px;line-height:1.3}
+.page{position:relative;width:210mm;min-height:297mm;margin:24px auto 52px;background:#fff;border:1px solid #dce2e9;border-radius:2px;box-shadow:0 18px 48px rgba(31,55,83,.14);overflow:visible}
+.a4-limit{position:absolute;z-index:5;top:calc(297mm - 1px);left:0;right:0;border-top:1px dashed rgba(200,16,46,.6);pointer-events:none}.a4-limit::after{content:'граница 1 листа A4';position:absolute;right:8mm;top:-8px;padding:1px 5px;background:#fff;color:${brandRed};font-size:8px;font-weight:700}
+.hero{padding:8mm 8mm 10px;background:#fff;border-bottom:1px solid #d7dce2}
+.brand-row{display:flex;align-items:center;justify-content:space-between;gap:16px}.brand{font-size:15px;font-weight:850;color:${brandRed};letter-spacing:.01em}.brand-sub{margin-top:1px;font-size:9px;color:#687484}.badge{padding:4px 8px;border-radius:999px;background:#eef3f8;color:${brandBlue};font-size:9.5px;font-weight:750}.title{margin:8px 0 3px;font-size:22px;line-height:1.12;font-weight:850;letter-spacing:-.025em;color:${brandBlue}}.meta{font-size:9.5px;color:#687483}
+.content{padding:0 8mm 8mm}.client{display:flex;align-items:flex-start;gap:0;padding:9px 0;margin-top:10px;background:#fff;border-top:1px solid #e1e6ed;border-bottom:1px solid #e1e6ed}.client div{flex:1 1 0;min-width:0;padding:0 10px;border-right:1px solid #e1e6ed;overflow-wrap:anywhere}.client div:first-child{padding-left:0}.client div:last-child{padding-right:0;border-right:0}.client div:nth-child(3){flex-grow:1.7}.client b{display:block;margin-bottom:3px;font-size:8px;line-height:1.2;text-transform:uppercase;letter-spacing:.07em;color:#737f8c}.client div:not(:has(b)){color:${ink};font-weight:550}
+.estimate-section{margin-top:14px;break-inside:auto}.section-title{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;padding:0 0 5px;margin-bottom:6px;border-bottom:2px solid ${brandBlue};font-size:13px;line-height:1.2;font-weight:850;color:${brandBlue}}.section-title b{font-size:13px;white-space:nowrap;color:${brandRed}}
+.sub-block{margin-bottom:9px}.sub-block:last-of-type{margin-bottom:0}.sub-title{font-size:10px;font-weight:750;color:#566271;margin-bottom:4px}
+.table-shell{width:100%;overflow:hidden;border:1px solid #dfe5eb;border-radius:7px}table{width:100%;min-width:0;border-collapse:collapse;table-layout:fixed}th,td{padding:5px 6px;border-bottom:1px solid #e8ecf0;text-align:left;vertical-align:top;overflow-wrap:anywhere;word-break:normal;font-size:9.5px;line-height:1.25}th{background:#f2f5f8;color:#566271;font-size:9px;font-weight:750;white-space:nowrap}tbody tr{break-inside:avoid}tbody tr:nth-child(even){background:#fbfcfd}tbody tr:last-child td{border-bottom:0}.r{text-align:right;white-space:nowrap}.strong{font-weight:750}.c-section{width:11%}.c-item{width:38%}.c-unit{width:7%}.c-qty{width:9%}.c-price{width:16%}.c-sum{width:19%}
+.mini{width:320px;max-width:100%;margin:7px 0 0 auto;padding:7px 9px;border:1px solid #e1e6ed;border-radius:8px;background:#fafbfd}.mini>div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:2px 0;color:#505c69;font-size:9.5px;align-items:start}.mini b{color:${ink}}.mini .discount-line{color:${brandRed}}.mini .discount-line b{color:${brandRed}}.mini .comment-line{border-top:1px dashed #dfe4e9;margin-top:3px;padding-top:5px}.mini .comment-line span:last-child{max-width:190px;text-align:right;overflow-wrap:anywhere}
+.grand{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:10px;padding:9px 12px;border-radius:8px;background:${brandBlue};color:#fff;font-size:14px;line-height:1.2;font-weight:850;break-inside:avoid}.grand span:last-child{font-size:16px;white-space:nowrap}.note{margin-top:7px;padding:7px 10px;border-left:3px solid ${brandRed};border-radius:0 7px 7px 0;background:#fafbfd;color:#596573;font-size:9.5px;break-inside:avoid}
 .print{position:fixed;top:18px;right:18px;z-index:20;border:1px solid ${brandRed};background:${brandRed};color:#fff;padding:11px 15px;border-radius:9px;cursor:pointer;font:700 14px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;box-shadow:0 8px 20px rgba(200,16,46,.18);transition:transform .15s,filter .15s}.print:hover{filter:brightness(.95);transform:translateY(-1px)}.print:focus-visible{outline:3px solid rgba(31,71,125,.25);outline-offset:2px}
-/* Единый набор правил для печати / сохранения в PDF — раньше здесь было два
-   пересекающихся @media print, из-за которых часть текста печаталась
-   нечитаемо мелкой (вплоть до 7px). Теперь один согласованный блок:
-   фирменные цвета сохраняются, текст остаётся читаемым, длинные КП
-   аккуратно переносятся на следующую страницу вместо схлопывания в одну. */
+@media screen and (max-width:760px){body{font-size:15px}.page{width:calc(100% - 20px);min-height:0;margin:12px auto 82px;border-radius:14px;overflow:hidden}.a4-limit{display:none}.hero{padding:22px 18px 20px;background:linear-gradient(135deg,#fff 0%,#f7f9fb 100%)}.content{padding:0 18px 28px}.brand-row{align-items:flex-start;flex-direction:column;gap:10px}.brand{font-size:19px}.brand-sub{font-size:12px}.badge{font-size:12px;padding:7px 11px}.title{font-size:28px;margin:18px 0 5px}.meta{font-size:13px}.client{align-items:stretch;flex-direction:column;gap:10px;padding:13px;margin-top:18px;background:#f5f7fa;border:1px solid #e1e6ed;border-radius:11px}.client div,.client div:first-child,.client div:last-child{padding:0;border:0}.client b{font-size:10px}.estimate-section{margin-top:28px}.section-title{align-items:flex-start;flex-direction:column;gap:5px;font-size:18px;margin-bottom:12px;padding-bottom:10px}.section-title b{font-size:16px}.sub-title{font-size:13px;margin-bottom:7px}.table-shell{overflow-x:auto;border-radius:10px}table{min-width:700px}th,td{padding:8px 7px;font-size:12px}.mini{width:100%;padding:10px 13px}.mini>div{font-size:13px;padding:4px 0}.grand{font-size:20px;padding:15px;margin-top:24px}.grand span:last-child{font-size:21px}.note{font-size:12.5px;padding:12px 14px}.print{top:auto;right:12px;bottom:12px;left:12px;width:calc(100% - 24px)}}
+@media screen and (max-width:520px){.hero{padding:19px 14px}.content{padding:0 14px 23px}.title{font-size:25px}.section-title{font-size:17px}.mini>div{grid-template-columns:1fr;gap:3px}.mini .comment-line span:last-child{text-align:left;max-width:none}table{min-width:640px}}
 @media print{
-  @page{size:A4;margin:10mm 8mm 10mm}
   html,body{background:#fff!important;margin:0!important}
-  .page{width:100%;margin:0;background:#fff;border:0;border-radius:0;box-shadow:none;overflow:visible}
-  .print{display:none!important}
-  .hero{padding:0 0 10px;background:#fff;border-bottom:1px solid #d7dce2}
+  .page{width:100%;min-height:0;margin:0;background:#fff;border:0;border-radius:0;box-shadow:none;overflow:visible}
+  .a4-limit,.print{display:none!important}
+  .hero{padding:0 0 10px}
   .content{padding:0}
-  .brand{font-size:15px}
-  .brand-sub{font-size:9px}
-  .badge{font-size:9.5px;padding:4px 8px}
-  .title{font-size:22px;margin:8px 0 3px}
-  .meta{font-size:9.5px}
-  .client{margin-top:10px;padding:9px 10px}
-  .client b{font-size:8px}
-  .client div{font-size:10.5px}
-  .estimate-section{margin-top:14px;break-inside:auto}
-  .section-title{font-size:13px;margin-bottom:6px;padding-bottom:5px}
-  .section-title b{font-size:13px}
-  .sub-title{font-size:10px;margin-bottom:4px}
-  .table-shell{overflow:visible}
-  table{width:100%;min-width:0}
-  th,td{padding:5px 6px;font-size:9.5px;line-height:1.25}
-  th{font-size:9px}
-  tbody tr{break-inside:avoid}
-  .mini{width:320px;max-width:100%;margin:7px 0 0 auto;padding:7px 9px}
-  .mini>div{font-size:9.5px;padding:2px 0}
-  .mini .comment-line span:last-child{max-width:190px}
-  .grand{margin-top:12px;padding:10px 13px;border-radius:9px;font-size:14px;box-shadow:none;break-inside:avoid}
-  .grand span:last-child{font-size:16px}
-  .note{margin-top:7px;padding:7px 10px;font-size:9.5px;break-inside:avoid}
+  .table-shell{overflow:visible!important}
+  table{width:100%!important;min-width:0!important}
 }
-@media(max-width:760px){body{font-size:15px}.page{width:calc(100% - 20px);margin:12px auto 28px;border-radius:14px}.hero{padding:22px 18px 20px}.content{padding:0 18px 28px}.brand-row{align-items:flex-start;flex-direction:column;gap:10px}.title{font-size:28px}.client{grid-template-columns:1fr}.estimate-section{margin-top:28px}.section-title{align-items:flex-start;flex-direction:column;gap:5px;font-size:18px}.section-title b{font-size:16px}.table-shell{overflow-x:auto}table{min-width:700px}.mini{width:100%}.grand{font-size:20px;padding:15px}.grand span:last-child{font-size:21px}.print{top:auto;right:12px;bottom:12px;left:12px;width:calc(100% - 24px)}}
-@media(max-width:520px){.hero{padding:19px 14px}.content{padding:0 14px 23px}.title{font-size:25px}.client{padding:13px}.section-title{font-size:17px}.mini>div{grid-template-columns:1fr;gap:3px}.mini .comment-line span:last-child{text-align:left;max-width:none}table{min-width:640px}}
-</style></head><body><button class="print" onclick="window.print()">Печать / PDF</button><main class="page"><header class="hero"><div class="brand-row"><div><div class="brand">Потолочная №1</div><div class="brand-sub">Натяжные потолки и освещение</div></div><div class="badge">Коммерческое предложение</div></div><div class="title">Расчёт стоимости</div><div class="meta">№${c.id} · ${esc(c.created_at)}</div></header><div class="content"><div class="client">${c.client_name?`<div><b>Клиент</b>${esc(c.client_name)}</div>`:''}${c.phone?`<div><b>Телефон</b>${esc(c.phone)}</div>`:''}${c.address?`<div><b>Адрес объекта</b>${esc(c.address)}</div>`:''}${c.manager?`<div><b>Менеджер</b>${esc(c.manager)}</div>`:''}${c.area?`<div><b>Площадь</b>${esc(c.area)} м²</div>`:''}</div>${servicesHtml}${block('Товары — освещение',products,productsSubtotal,productsDiscount,productsSubtotal-productsDiscount,c.discount.products)}<div class="grand"><span>Итого к оплате</span><span>${rub(total)}</span></div>${c.notes?`<div class="note"><b>Комментарий:</b> ${esc(c.notes)}</div>`:''}</div></main></body></html>`;
+</style></head><body><button class="print" onclick="window.print()">Печать / PDF</button><main class="page"><div class="a4-limit" aria-hidden="true"></div><header class="hero"><div class="brand-row"><div><div class="brand">Потолочная №1</div><div class="brand-sub">Натяжные потолки и освещение</div></div><div class="badge">Коммерческое предложение</div></div><div class="title">Расчёт стоимости</div><div class="meta">№${c.id} · ${esc(c.created_at)}</div></header><div class="content"><div class="client">${c.client_name?`<div><b>Клиент</b>${esc(c.client_name)}</div>`:''}${c.phone?`<div><b>Телефон</b>${esc(c.phone)}</div>`:''}${c.address?`<div><b>Адрес объекта</b>${esc(c.address)}</div>`:''}${c.manager?`<div><b>Менеджер</b>${esc(c.manager)}</div>`:''}${c.area?`<div><b>Площадь</b>${esc(c.area)} м²</div>`:''}</div>${servicesHtml}${block('Товары — освещение',products,productsSubtotal,productsDiscount,productsSubtotal-productsDiscount,c.discount.products)}<div class="grand"><span>Итого к оплате</span><span>${rub(total)}</span></div>${c.notes?`<div class="note"><b>Комментарий:</b> ${esc(c.notes)}</div>`:''}</div></main></body></html>`;
 }
 app.get('/kp/:id',(req,res)=>{
   ensureDbOpen();const c=getCalc(Number(req.params.id));if(!c)return res.status(404).send('КП не найдено');res.setHeader('Cache-Control','no-store');res.send(cpHtml(c));});
