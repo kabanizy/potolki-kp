@@ -1,0 +1,9 @@
+[Unit]
+Description=Restart unhealthy Potolki KP containers
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/potolki-kp/ops/healthcheck.sh
+
