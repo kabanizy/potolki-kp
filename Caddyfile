@@ -5,6 +5,10 @@
 xn--j1ak.xn--1-7sb6aidabe2a7c4e.xn--p1ai {
     encode zstd gzip
 
+    tls {
+        issuer acme https://acme-v02.api.letsencrypt.org/directory
+    }
+
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
         X-Content-Type-Options "nosniff"
