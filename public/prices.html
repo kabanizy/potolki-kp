@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Управление прайсом — Потолочная №1</title>
+<style>
+:root{--red:#cf1734;--blue:#244b7d;--deep:#193b68;--ink:#1b2430;--muted:#5b6675;--line:#dfe4ea;--soft:#f5f7fa;--bg:#eef2f6;--green:#1f7a4d}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#f3f6f9,#edf1f5);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}.wrap{max-width:1500px;margin:auto;padding:24px 28px 70px}.topbar,.card{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 10px 28px rgba(25,59,104,.08)}.topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 18px;margin-bottom:20px}.brand{display:flex;align-items:center;gap:11px;font-weight:900;color:var(--red)}.logo{width:40px;height:40px;border-radius:11px;background:linear-gradient(135deg,var(--red),#a90f27);color:#fff;display:grid;place-items:center}.nav{display:flex;gap:8px;align-items:center}.card{margin-bottom:18px;overflow:hidden}.head{display:flex;justify-content:space-between;gap:14px;align-items:center;padding:17px 20px;border-bottom:1px solid var(--line)}h1,h2,h3{margin:0;color:var(--deep)}h1{font-size:28px;margin-bottom:16px}h2{font-size:18px}.meta{font-size:13px;color:var(--muted);margin-top:3px}.pad{padding:20px}.grid{display:grid;grid-template-columns:2fr 1.2fr .8fr .8fr auto;gap:10px;align-items:end}.category-grid{display:grid;grid-template-columns:2fr 1.2fr 90px auto auto;gap:9px;align-items:center}.field{display:flex;flex-direction:column;gap:5px}label{font-size:12px;font-weight:750;color:#53606d}input,select,button{font:inherit}input,select{width:100%;padding:10px 11px;border:1px solid #cbd4dd;border-radius:8px;background:#fff;color:var(--ink)}input:focus,select:focus{outline:0;border-color:var(--blue);box-shadow:0 0 0 4px rgba(36,75,125,.14)}button,.btn{text-decoration:none;text-decoration:none;border:1px solid var(--blue);background:var(--blue);color:#fff;border-radius:8px;padding:10px 14px;min-height:41px;font-weight:800;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.ghost{background:#fff;color:var(--blue);border-color:#cad4de}.danger{background:#fff;color:var(--red);border-color:#e7b8c1}.small{padding:7px 10px;min-height:36px;font-size:13px}.status{position:fixed;right:20px;bottom:20px;z-index:20;display:none;padding:12px 15px;border-radius:10px;background:var(--deep);color:#fff;box-shadow:0 12px 30px rgba(0,0,0,.18);font-weight:750}.status.show{display:block}.status.err{background:#a90f27}.sections{display:grid;gap:14px}.section{border:1px solid var(--line);border-radius:12px;overflow:hidden}.section-head{background:#f9fbfd;padding:13px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px}.section-head:hover{background:#f1f5f9}.section-arrow{color:var(--red);font-size:18px;transition:transform .18s}.section:not(.collapsed) .section-arrow{transform:rotate(90deg)}.section.collapsed .table-wrap{display:none}.table-wrap{overflow:auto}table{width:100%;min-width:920px;border-collapse:collapse}th,td{padding:9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}th{background:var(--soft);font-size:11px;text-transform:uppercase;color:#596573}tr:last-child td{border-bottom:0}td input,td select{padding:8px;font-size:13px}.name{min-width:280px}.unit{width:105px}.price{width:125px}.subgroup{width:155px}.actions{display:flex;gap:6px;white-space:nowrap}.badge{display:inline-block;padding:3px 8px;border-radius:999px;background:#eaf0f7;color:var(--blue);font-size:11px;font-weight:800}.empty{padding:26px;text-align:center;color:var(--muted)}
+@media(max-width:800px){.wrap{padding:12px 10px 40px}.topbar{align-items:flex-start;flex-direction:column}.nav{width:100%}.nav .btn{text-decoration:none;flex:1}h1{font-size:24px}.grid,.category-grid{grid-template-columns:1fr 1fr}.grid .field:first-child,.category-grid input:first-child{grid-column:1/-1}.grid button,.category-grid .danger{grid-column:1/-1}.pad{padding:14px}.head{padding:14px;align-items:flex-start;flex-direction:column}}
+</style>
+</head>
+<body>
+<div id="status" class="status"></div>
+<main class="wrap">
+  <div class="topbar"><a class="brand" href="/" aria-label="На главную"><div class="logo">№1</div><div>Управление прайсом</div></a><div class="nav"><a class="btn small ghost" href="/">← Калькулятор</a><a class="btn small ghost" href="/logout">Выйти</a></div></div>
+  <h1>Позиции и категории</h1>
+
+  <section class="card">
+    <div class="head"><div><h2>Добавить позицию</h2><div class="meta">Новая позиция сразу появится у всех менеджеров.</div></div></div>
+    <form id="itemForm" class="pad grid">
+      <div class="field"><label>Название</label><input id="newName" required placeholder="Например, Закладная под карниз"></div>
+      <div class="field"><label>Категория</label><select id="newSection" required></select></div>
+      <div class="field"><label>Единица</label><input id="newUnit" value="шт"></div>
+      <div class="field"><label>Цена, ₽</label><input id="newPrice" type="number" min="0" step=".01" required></div>
+      <button type="submit">Добавить</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <div class="head"><div><h2>Категории</h2><div class="meta">Тип определяет, в какой блок коммерческого предложения попадут позиции.</div></div></div>
+    <div class="pad">
+      <form id="categoryForm" class="grid" style="margin-bottom:16px">
+        <div class="field"><label>Новая категория</label><input id="categoryName" required placeholder="Название категории"></div>
+        <div class="field"><label>Раздел КП</label><select id="categoryGroup"><option value="canvas">Полотна</option><option value="services" selected>Услуги и материалы</option><option value="products">Товары</option></select></div>
+        <div></div><div></div><button type="submit">Создать</button>
+      </form>
+      <div id="categoryList" class="sections"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="head"><div><h2>Все позиции</h2><div class="meta">Изменяйте название, категорию, единицу, цену и подгруппу. Сохранённые изменения записываются в общую базу.</div></div></div>
+    <div id="priceList" class="sections pad"><div class="empty">Загрузка…</div></div>
+  </section>
+</main>
+<script>
+let sections=[];const $=id=>document.getElementById(id);const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+async function api(url,opt){const r=await fetch(url,opt);if(!r.ok){const e=await r.json().catch(()=>({error:'Ошибка запроса'}));throw new Error(e.error||'Ошибка запроса')}return r.json()}
+let statusTimer;function notify(text,err=false){const el=$('status');el.textContent=text;el.className='status show'+(err?' err':'');clearTimeout(statusTimer);statusTimer=setTimeout(()=>el.className='status',3500)}
+const groupOptions=value=>`<option value="canvas" ${value==='canvas'?'selected':''}>Полотна</option><option value="services" ${value==='services'?'selected':''}>Услуги и материалы</option><option value="products" ${value==='products'?'selected':''}>Товары</option>`;
+const sectionOptions=value=>sections.map(s=>`<option value="${s.id}" ${Number(value)===s.id?'selected':''}>${esc(s.name)}</option>`).join('');
+async function load(){sections=await api('/api/prices');$('newSection').innerHTML=sectionOptions();renderCategories();renderPrices()}
+function renderCategories(){$('categoryList').innerHTML=sections.map(s=>{const system=s.name==='Полотно'||s.name==='Услуги и материалы';return `<div class="section section-head"><div class="category-grid"><input id="sn-${s.id}" value="${esc(s.name)}" aria-label="Название категории" ${system?'readonly':''}><select id="sg-${s.id}" aria-label="Раздел КП" ${system?'disabled':''}>${groupOptions(s.calcGroup)}</select><input id="so-${s.id}" type="number" value="${s.sortOrder||0}" aria-label="Порядок"><button class="btn small ghost" onclick="saveSection(${s.id})">Сохранить</button>${system?'<span class="badge">Системная</span>':`<button class="btn small danger" onclick="deleteSection(${s.id})">Удалить</button>`}</div></div>`}).join('')||'<div class="empty">Категорий пока нет.</div>'}
+function renderPrices(){$('priceList').innerHTML=sections.map(s=>`<div class="section"><div class="section-head" onclick="this.parentElement.classList.toggle('collapsed')"><h3>${esc(s.name)} <span class="badge">${s.items.length}</span></h3><span class="section-arrow">›</span></div><div class="table-wrap"><table><thead><tr><th>Название</th><th>Категория</th><th>Ед.</th><th>Цена, ₽</th><th>Подгруппа</th><th>Действия</th></tr></thead><tbody>${s.items.map(i=>{const automatic=i.name==='Установка полотна';return `<tr><td><input class="name" id="n-${i.id}" value="${esc(i.name)}" ${automatic?'readonly':''}></td><td><select id="s-${i.id}" ${automatic?'disabled':''}>${sectionOptions(s.id)}</select></td><td><input class="unit" id="u-${i.id}" value="${esc(i.unit)}"></td><td><input class="price" id="p-${i.id}" type="number" min="0" step=".01" value="${i.price??''}"></td><td><input class="subgroup" id="g-${i.id}" value="${esc(i.group||'')}" placeholder="Необязательно"></td><td><div class="actions"><button type="button" class="btn small ghost" onclick="event.stopPropagation();saveItem(${i.id})">Сохранить</button>${automatic?'':`<button type="button" class="btn small danger" onclick="event.stopPropagation();deleteItem(${i.id})">Удалить</button>`}</div></td></tr>`}).join('')||'<tr><td colspan="6" class="empty">В категории пока нет позиций.</td></tr>'}</tbody></table></div></div>`).join('')}
+async function saveSection(id){try{await api('/api/price-sections/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('sn-'+id).value,calc_group:$('sg-'+id).value,sort_order:$('so-'+id).value})});await load();notify('Категория сохранена')}catch(e){notify(e.message,true)}}
+async function deleteSection(id){const s=sections.find(x=>x.id===id);if(!confirm(`Удалить категорию «${s?.name||''}» и все позиции внутри?`))return;try{await api('/api/price-sections/'+id,{method:'DELETE'});await load();notify('Категория удалена')}catch(e){notify(e.message,true)}}
+async function saveItem(id){try{await api('/api/prices/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('n-'+id).value,section_id:$('s-'+id).value,unit:$('u-'+id).value,price:$('p-'+id).value,group_name:$('g-'+id).value})});await load();notify('Позиция сохранена')}catch(e){notify(e.message,true)}}
+async function deleteItem(id){const item=sections.flatMap(s=>s.items).find(x=>x.id===id);if(!confirm(`Удалить позицию «${item?.name||''}»?`))return;try{await api('/api/prices/'+id,{method:'DELETE'});await load();notify('Позиция удалена')}catch(e){notify(e.message,true)}}
+$('itemForm').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/prices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('newName').value,section_id:$('newSection').value,unit:$('newUnit').value,price:$('newPrice').value})});e.target.reset();$('newUnit').value='шт';await load();notify('Позиция добавлена')}catch(err){notify(err.message,true)}});
+$('categoryForm').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/price-sections',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('categoryName').value,calc_group:$('categoryGroup').value})});e.target.reset();await load();notify('Категория создана')}catch(err){notify(err.message,true)}});
+load().catch(e=>notify(e.message,true));
+</script>
+</body>
+</html>

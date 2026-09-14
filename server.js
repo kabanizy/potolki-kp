@@ -20,7 +20,9 @@ function ensureDbOpen() {
   return db;
 }
 
-const LIGHTING_SECTIONS = new Set(['Монтаж освещения', 'Монтаж треков']);
+const LEGACY_LIGHTING_SECTIONS = new Set(['Монтаж освещения', 'Монтаж треков']);
+const PRICE_GROUPS = new Set(['canvas', 'services', 'products']);
+const AUTO_INSTALL_NAME = 'Установка полотна';
 
 // ===================== ОБЩИЙ ВХОД ДЛЯ МЕНЕДЖЕРОВ =====================
 // Один общий логин/пароль на всех менеджеров (не персональные аккаунты).
@@ -29,7 +31,7 @@ const LIGHTING_SECTIONS = new Set(['Монтаж освещения', 'Монт�
 // Страницы коммерческих предложений (/kp/:id) НЕ защищены — по ним должен
 // открываться доступ без авторизации, чтобы клиент мог просто перейти по ссылке.
 const APP_USER = process.env.APP_USER || 'manager';
-const APP_PASS = process.env.APP_PASS || 'potolok2026';
+const APP_PASS = process.env.APP_PASS || 'potolki2026';
 const SESSION_COOKIE = 'sid';
 // Действующие сессии храним в памяти процесса — этого достаточно для одного
 // общего аккаунта на небольшую команду. При перезапуске сервера менеджерам
@@ -174,21 +176,22 @@ PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS price_sections(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL UNIQUE,sort_order INTEGER NOT NULL DEFAULT 0,calc_group TEXT NOT NULL DEFAULT 'ceiling');
 CREATE TABLE IF NOT EXISTS price_items(id INTEGER PRIMARY KEY AUTOINCREMENT,section_id INTEGER NOT NULL,name TEXT NOT NULL,unit TEXT NOT NULL DEFAULT 'шт',price REAL,sort_order INTEGER NOT NULL DEFAULT 0,group_name TEXT,group_order INTEGER NOT NULL DEFAULT 0,UNIQUE(section_id,name),FOREIGN KEY(section_id) REFERENCES price_sections(id) ON DELETE CASCADE);
-CREATE TABLE IF NOT EXISTS calculations(id INTEGER PRIMARY KEY AUTOINCREMENT,client_name TEXT NOT NULL,phone TEXT,address TEXT,manager TEXT,notes TEXT,area REAL NOT NULL DEFAULT 0,items_json TEXT NOT NULL,discount_json TEXT NOT NULL,subtotal REAL NOT NULL,discount_amount REAL NOT NULL,total REAL NOT NULL,created_at TEXT NOT NULL DEFAULT(datetime('now','localtime')),updated_at TEXT NOT NULL DEFAULT(datetime('now','localtime')));
+CREATE TABLE IF NOT EXISTS calculations(id INTEGER PRIMARY KEY AUTOINCREMENT,client_name TEXT NOT NULL,phone TEXT,address TEXT,manager TEXT,notes TEXT,area REAL NOT NULL DEFAULT 0,room_perimeter REAL NOT NULL DEFAULT 0,calculation_type TEXT NOT NULL DEFAULT 'detailed',items_json TEXT NOT NULL,discount_json TEXT NOT NULL,subtotal REAL NOT NULL,discount_amount REAL NOT NULL,total REAL NOT NULL,created_at TEXT NOT NULL DEFAULT(datetime('now','localtime')),updated_at TEXT NOT NULL DEFAULT(datetime('now','localtime')));
 CREATE INDEX IF NOT EXISTS idx_calc_search ON calculations(client_name,phone,address,manager);
 CREATE INDEX IF NOT EXISTS idx_price_section ON price_items(section_id,group_order,sort_order);
+CREATE TABLE IF NOT EXISTS quick_settings(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,calc_group TEXT NOT NULL DEFAULT 'services',sort_order INTEGER NOT NULL DEFAULT 0,enabled INTEGER NOT NULL DEFAULT 1);
 `);
 
 for (const stmt of [
   "ALTER TABLE price_sections ADD COLUMN calc_group TEXT NOT NULL DEFAULT 'ceiling'",
   "ALTER TABLE price_items ADD COLUMN group_name TEXT",
   "ALTER TABLE price_items ADD COLUMN group_order INTEGER NOT NULL DEFAULT 0",
-  "ALTER TABLE calculations ADD COLUMN area REAL NOT NULL DEFAULT 0"
+  "ALTER TABLE calculations ADD COLUMN area REAL NOT NULL DEFAULT 0",
+  "ALTER TABLE calculations ADD COLUMN calculation_type TEXT NOT NULL DEFAULT 'detailed'",
+  "ALTER TABLE calculations ADD COLUMN room_perimeter REAL NOT NULL DEFAULT 0"
 ]) {
   try { db.exec(stmt); } catch (e) { if (!String(e.message).includes('duplicate column name')) throw e; }
 }
-
-db.exec(`UPDATE price_sections SET calc_group='lighting' WHERE name IN ('Монтаж освещения','Монтаж треков')`);
 
 function seedPrices(){
   ensureDbOpen();
@@ -229,6 +232,65 @@ function seedMissingPrices(){
 }
 seedMissingPrices();
 
+function seedQuickSettings(){
+  ensureDbOpen();
+  const count=Number(db.prepare('SELECT COUNT(*) c FROM quick_settings').get().c);
+  if(count)return;
+  const ins=db.prepare('INSERT INTO quick_settings(name,calc_group,sort_order,enabled) VALUES(?,?,?,1)');
+  [
+    ['Углы','services',0],
+    ['Монтаж светильников','services',1],
+    ['Люстры','services',2],
+    ['Керамогранит','services',3],
+    ['Карниз','services',4],
+    ['Дополнительные работы','services',5]
+  ].forEach(([name,group,order])=>ins.run(name,group,order));
+}
+seedQuickSettings();
+
+function normalizeQuickSettingsOrder(){
+  ensureDbOpen();
+  const rows=db.prepare('SELECT id,name FROM quick_settings WHERE enabled=1 ORDER BY sort_order,id').all();
+  const obsolete=/^(площадь|периметр) помещения(?:\s*,?\s*(?:м²|м2|м))?$/iu;
+  const remove=db.prepare('DELETE FROM quick_settings WHERE id=?');
+  const update=db.prepare('UPDATE quick_settings SET sort_order=? WHERE id=?');
+  db.exec('BEGIN');
+  try{
+    const current=[];
+    for(const row of rows){
+      if(obsolete.test(String(row.name||'').trim()))remove.run(row.id);
+      else current.push(row);
+    }
+    current.forEach((row,index)=>update.run(index,row.id));
+    db.exec('COMMIT');
+  }catch(error){
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+normalizeQuickSettingsOrder();
+
+// Приводим старую двухчастную классификацию к структуре итогового КП:
+// полотна / услуги и материалы / товары. Сохранённые расчёты остаются
+// совместимыми — при их чтении также учитываются прежние значения групп.
+db.exec(`
+  UPDATE price_sections SET calc_group='canvas' WHERE name='Полотно';
+  UPDATE price_sections SET calc_group='services' WHERE name<>'Полотно' AND calc_group IN ('ceiling','lighting');
+`);
+
+(function ensureAutomaticCanvasInstallation(){
+  ensureDbOpen();
+  let section=db.prepare(`SELECT id FROM price_sections WHERE name='Услуги и материалы'`).get();
+  if(!section){
+    const next=Number(db.prepare('SELECT COALESCE(MAX(sort_order),0)+1 n FROM price_sections').get().n);
+    section={id:Number(db.prepare('INSERT INTO price_sections(name,sort_order,calc_group) VALUES(?,?,?)').run('Услуги и материалы',next,'services').lastInsertRowid)};
+  }else db.prepare(`UPDATE price_sections SET calc_group='services' WHERE id=?`).run(section.id);
+  const existing=db.prepare('SELECT id FROM price_items WHERE name=? LIMIT 1').get(AUTO_INSTALL_NAME);
+  if(!existing){
+    db.prepare('INSERT INTO price_items(section_id,name,unit,price,sort_order,group_name,group_order) VALUES(?,?,?,?,?,?,?)').run(section.id,AUTO_INSTALL_NAME,'пог.м',500,0,null,0);
+  }
+})();
+
 // Цена "Запилка угла трека" раньше не была указана в прайсе (price=NULL).
 // Заполняем её только там, где менеджер ещё не ввёл цену вручную сам —
 // уже сохранённые ручные значения не трогаем.
@@ -245,26 +307,121 @@ app.use(express.static(path.join(__dirname,'public')));
 
 function getPrices(){
   ensureDbOpen();
-  const rows = db.prepare(`SELECT s.id section_id,s.name section_name,s.sort_order section_order,s.calc_group,i.id item_id,i.name item_name,i.unit,i.price,i.sort_order,i.group_name,i.group_order FROM price_sections s JOIN price_items i ON i.section_id=s.id ORDER BY s.sort_order,i.group_order,i.sort_order,i.id`).all();
+  const rows = db.prepare(`SELECT s.id section_id,s.name section_name,s.sort_order section_order,s.calc_group,i.id item_id,i.name item_name,i.unit,i.price,i.sort_order,i.group_name,i.group_order FROM price_sections s LEFT JOIN price_items i ON i.section_id=s.id ORDER BY s.sort_order,s.id,i.group_order,i.sort_order,i.id`).all();
   const map = new Map();
   for (const r of rows) {
-    if (!map.has(r.section_id)) map.set(r.section_id,{id:r.section_id,name:r.section_name,calcGroup:r.calc_group,items:[]});
-    map.get(r.section_id).items.push({id:r.item_id,name:r.item_name,unit:r.unit,price:r.price,group:r.group_name,groupOrder:r.group_order});
+    if (!map.has(r.section_id)) map.set(r.section_id,{id:r.section_id,name:r.section_name,sortOrder:r.section_order,calcGroup:r.calc_group,items:[]});
+    if(r.item_id!==null) map.get(r.section_id).items.push({id:r.item_id,name:r.item_name,unit:r.unit,price:r.price,sortOrder:r.sort_order,group:r.group_name,groupOrder:r.group_order});
   }
   return [...map.values()];
 }
 app.get('/api/prices',(req,res)=>res.json(getPrices()));
+function validPriceGroup(value){return PRICE_GROUPS.has(String(value||''))?String(value):'services'}
+function parsedPrice(value){
+  if(value===''||value===null||value===undefined)return null;
+  const n=Number(value);
+  return Number.isFinite(n)&&n>=0?n:NaN;
+}
+app.post('/api/price-sections',(req,res)=>{
+  const name=String(req.body?.name||'').trim();
+  if(!name)return res.status(400).json({error:'Укажите название категории'});
+  const calcGroup=validPriceGroup(req.body?.calc_group);
+  const sortOrder=Number.isFinite(Number(req.body?.sort_order))?Number(req.body.sort_order):Number(db.prepare('SELECT COALESCE(MAX(sort_order),-1)+1 n FROM price_sections').get().n);
+  try{
+    const x=db.prepare('INSERT INTO price_sections(name,sort_order,calc_group) VALUES(?,?,?)').run(name,sortOrder,calcGroup);
+    res.status(201).json({id:Number(x.lastInsertRowid)});
+  }catch(e){res.status(409).json({error:String(e.message).includes('UNIQUE')?'Категория с таким названием уже существует':'Не удалось добавить категорию'})}
+});
+app.put('/api/price-sections/:id',(req,res)=>{
+  const id=Number(req.params.id),current=db.prepare('SELECT * FROM price_sections WHERE id=?').get(id);
+  if(!current)return res.status(404).json({error:'Категория не найдена'});
+  const system=current.name==='Полотно'||current.name==='Услуги и материалы';
+  const name=system?current.name:String(req.body?.name||'').trim();
+  if(!name)return res.status(400).json({error:'Укажите название категории'});
+  const calcGroup=system?(current.name==='Полотно'?'canvas':'services'):validPriceGroup(req.body?.calc_group);
+  const sortOrder=Number.isFinite(Number(req.body?.sort_order))?Number(req.body.sort_order):0;
+  try{
+    const x=db.prepare('UPDATE price_sections SET name=?,calc_group=?,sort_order=? WHERE id=?').run(name,calcGroup,sortOrder,id);
+    res.json({ok:true});
+  }catch(e){res.status(409).json({error:String(e.message).includes('UNIQUE')?'Категория с таким названием уже существует':'Не удалось сохранить категорию'})}
+});
+app.delete('/api/price-sections/:id',(req,res)=>{
+  const id=Number(req.params.id);
+  const section=db.prepare('SELECT name FROM price_sections WHERE id=?').get(id);
+  if(!section)return res.status(404).json({error:'Категория не найдена'});
+  if(section.name==='Полотно'||section.name==='Услуги и материалы')return res.status(400).json({error:'Системную категорию удалить нельзя'});
+  const x=db.prepare('DELETE FROM price_sections WHERE id=?').run(id);
+  res.json({ok:!!x.changes});
+});
+app.post('/api/prices',(req,res)=>{
+  const b=req.body||{},name=String(b.name||'').trim(),unit=String(b.unit||'шт').trim()||'шт',sectionId=Number(b.section_id),price=parsedPrice(b.price);
+  if(!name)return res.status(400).json({error:'Укажите название позиции'});
+  if(!Number.isInteger(sectionId)||!db.prepare('SELECT id FROM price_sections WHERE id=?').get(sectionId))return res.status(400).json({error:'Выберите категорию'});
+  if(Number.isNaN(price))return res.status(400).json({error:'Некорректная цена'});
+  const sortOrder=Number.isFinite(Number(b.sort_order))?Number(b.sort_order):Number(db.prepare('SELECT COALESCE(MAX(sort_order),-1)+1 n FROM price_items WHERE section_id=?').get(sectionId).n);
+  try{
+    const x=db.prepare('INSERT INTO price_items(section_id,name,unit,price,sort_order,group_name,group_order) VALUES(?,?,?,?,?,?,?)').run(sectionId,name,unit,price,sortOrder,String(b.group_name||'').trim()||null,Number(b.group_order)||0);
+    res.status(201).json({id:Number(x.lastInsertRowid)});
+  }catch(e){res.status(409).json({error:String(e.message).includes('UNIQUE')?'Такая позиция уже есть в выбранной категории':'Не удалось добавить позицию'})}
+});
 app.put('/api/prices/:id',(req,res)=>{
   const id = Number(req.params.id), body = req.body || {};
-  let price = body.price;
-  price = (price===''||price===null||price===undefined) ? null : Number(price);
-  if (price!==null && (!Number.isFinite(price)||price<0)) return res.status(400).json({error:'Некорректная цена'});
+  const current=db.prepare('SELECT * FROM price_items WHERE id=?').get(id);
+  if(!current)return res.status(404).json({error:'Позиция не найдена'});
+  const price = parsedPrice(body.price);
+  if(Number.isNaN(price))return res.status(400).json({error:'Некорректная цена'});
   const unit = String(body.unit||'шт').trim()||'шт';
-  const result = db.prepare('UPDATE price_items SET price=?,unit=? WHERE id=?').run(price,unit,id);
-  if(!result.changes) return res.status(404).json({error:'Позиция не найдена'});
+  const automatic=current.name===AUTO_INSTALL_NAME;
+  const name=automatic?AUTO_INSTALL_NAME:String(body.name??current.name).trim();
+  const sectionId=automatic?Number(current.section_id):Number(body.section_id??current.section_id);
+  if(!name)return res.status(400).json({error:'Укажите название позиции'});
+  if(!Number.isInteger(sectionId)||!db.prepare('SELECT id FROM price_sections WHERE id=?').get(sectionId))return res.status(400).json({error:'Выберите категорию'});
+  try{
+    db.prepare('UPDATE price_items SET section_id=?,name=?,unit=?,price=?,sort_order=?,group_name=?,group_order=? WHERE id=?').run(sectionId,name,unit,price,Number(body.sort_order??current.sort_order)||0,String(body.group_name??current.group_name??'').trim()||null,Number(body.group_order??current.group_order)||0,id);
+    res.json({ok:true});
+  }catch(e){res.status(409).json({error:String(e.message).includes('UNIQUE')?'Такая позиция уже есть в выбранной категории':'Не удалось сохранить позицию'})}
+});
+app.delete('/api/prices/:id',(req,res)=>{
+  const id=Number(req.params.id),item=db.prepare('SELECT name FROM price_items WHERE id=?').get(id);
+  if(!item)return res.status(404).json({error:'Позиция не найдена'});
+  if(item.name===AUTO_INSTALL_NAME)return res.status(400).json({error:'Автоматическую установку полотна удалить нельзя'});
+  db.prepare('DELETE FROM price_items WHERE id=?').run(id);
   res.json({ok:true});
 });
 
+app.get('/api/quick-settings',(req,res)=>{
+  ensureDbOpen();
+  res.json(db.prepare('SELECT id,name,calc_group,sort_order FROM quick_settings WHERE enabled=1 ORDER BY sort_order,id').all());
+});
+app.post('/api/quick-settings',(req,res)=>{
+  ensureDbOpen();
+  const name=String(req.body?.name||'').trim();
+  const calcGroup=validPriceGroup(req.body?.calc_group);
+  const sortOrder=Number.isFinite(Number(req.body?.sort_order))?Number(req.body.sort_order):Number(db.prepare('SELECT COALESCE(MAX(sort_order),-1)+1 n FROM quick_settings').get().n);
+  if(!name)return res.status(400).json({error:'Укажите название строки'});
+  const x=db.prepare('INSERT INTO quick_settings(name,calc_group,sort_order,enabled) VALUES(?,?,?,1)').run(name,calcGroup,sortOrder);
+  normalizeQuickSettingsOrder();
+  res.status(201).json({id:Number(x.lastInsertRowid)});
+});
+app.put('/api/quick-settings/:id',(req,res)=>{
+  ensureDbOpen();
+  const id=Number(req.params.id),cur=db.prepare('SELECT * FROM quick_settings WHERE id=?').get(id);
+  if(!cur)return res.status(404).json({error:'Строка не найдена'});
+  const name=String(req.body?.name??cur.name).trim();
+  const calcGroup=validPriceGroup(req.body?.calc_group??cur.calc_group);
+  const sortOrder=Number.isFinite(Number(req.body?.sort_order))?Number(req.body.sort_order):cur.sort_order;
+  if(!name)return res.status(400).json({error:'Укажите название строки'});
+  db.prepare('UPDATE quick_settings SET name=?,calc_group=?,sort_order=?,enabled=1 WHERE id=?').run(name,calcGroup,sortOrder,id);
+  normalizeQuickSettingsOrder();
+  res.json({ok:true});
+});
+app.delete('/api/quick-settings/:id',(req,res)=>{
+  ensureDbOpen();
+  const x=db.prepare('DELETE FROM quick_settings WHERE id=?').run(Number(req.params.id));
+  if(!x.changes)return res.status(404).json({error:'Строка не найдена'});
+  normalizeQuickSettingsOrder();
+  res.json({ok:true});
+});
 function getCalc(id){
   ensureDbOpen();
   const r = db.prepare('SELECT * FROM calculations WHERE id=?').get(id);
@@ -282,8 +439,8 @@ app.get('/api/calculations',(req,res)=>{
   const limit=Math.min(Math.max(Number(req.query.limit)||100,1),500);
   const like=`%${q}%`;
   const rows=q
-    ? db.prepare(`SELECT id,client_name,phone,address,manager,area,subtotal,discount_amount,total,created_at,updated_at FROM calculations WHERE client_name LIKE ? OR phone LIKE ? OR address LIKE ? OR manager LIKE ? OR CAST(id AS TEXT) LIKE ? ORDER BY id DESC LIMIT ?`).all(like,like,like,like,like,limit)
-    : db.prepare(`SELECT id,client_name,phone,address,manager,area,subtotal,discount_amount,total,created_at,updated_at FROM calculations ORDER BY id DESC LIMIT ?`).all(limit);
+    ? db.prepare(`SELECT id,client_name,phone,address,manager,area,room_perimeter,calculation_type,subtotal,discount_amount,total,created_at,updated_at FROM calculations WHERE client_name LIKE ? OR phone LIKE ? OR address LIKE ? OR manager LIKE ? OR CAST(id AS TEXT) LIKE ? ORDER BY id DESC LIMIT ?`).all(like,like,like,like,like,limit)
+    : db.prepare(`SELECT id,client_name,phone,address,manager,area,room_perimeter,calculation_type,subtotal,discount_amount,total,created_at,updated_at FROM calculations ORDER BY id DESC LIMIT ?`).all(limit);
   res.json(rows);
 });
 app.get('/api/calculations/:id',(req,res)=>{
@@ -307,22 +464,30 @@ function normalizeDiscount(d){
   const x=d&&typeof d==='object'?d:{};
   return {type:String(x.type||'none'),value:Number(x.value)||0,reason:String(x.reason||'').trim()};
 }
+function normalizedItemGroup(x){
+  const group=String(x?.calc_group||'');
+  if(group==='products')return 'products';
+  if(group==='canvas'||String(x?.section||'').trim()==='Полотно')return 'canvas';
+  if(group==='services'||group==='ceiling'||group==='lighting'||LEGACY_LIGHTING_SECTIONS.has(x?.section))return 'services';
+  return 'services';
+}
 function normalize(b){
   const rawItems=Array.isArray(b.items)?b.items:[];
-  const items=rawItems.filter(x=>Number(x.qty)>0).map(x=>({...x,qty:Number(x.qty),price:Number(x.price),calc_group:x.calc_group || (LIGHTING_SECTIONS.has(x.section)?'lighting':'ceiling')}));
+  const items=rawItems.filter(x=>Number(x.qty)>0&&Number(x.price)>=0).map(x=>({...x,qty:Number(x.qty),price:Number(x.price),calc_group:normalizedItemGroup(x),source:x.source==='quick'?'quick':'price'}));
   const area=Number(b.area)||0;
-  const ceilingItems=items.filter(x=>x.calc_group==='ceiling');
-  const lightingItems=items.filter(x=>x.calc_group==='lighting');
+  const room_perimeter=Number(b.room_perimeter)||0;
+  const canvasItems=items.filter(x=>x.calc_group==='canvas');
+  const serviceItems=items.filter(x=>x.calc_group==='services');
   const productsItems=items.filter(x=>x.calc_group==='products');
-  const ceilingSubtotal=ceilingItems.reduce((s,x)=>s+x.qty*x.price,0);
-  const lightingSubtotal=lightingItems.reduce((s,x)=>s+x.qty*x.price,0);
+  const canvasSubtotal=canvasItems.reduce((s,x)=>s+x.qty*x.price,0);
+  const serviceSubtotal=serviceItems.reduce((s,x)=>s+x.qty*x.price,0);
   const productsSubtotal=productsItems.reduce((s,x)=>s+x.qty*x.price,0);
-  const subtotal=ceilingSubtotal+lightingSubtotal+productsSubtotal;
+  const subtotal=canvasSubtotal+serviceSubtotal+productsSubtotal;
   let services,products,ceiling,lighting,servicesDiscount,productsDiscount;
   if (b.discount?.services) {
     services=normalizeDiscount(b.discount.services);
     products=normalizeDiscount(b.discount.products);
-    servicesDiscount=discountAmount(ceilingSubtotal+lightingSubtotal,services,area);
+    servicesDiscount=discountAmount(canvasSubtotal+serviceSubtotal,services,area);
     productsDiscount=discountAmount(productsSubtotal,products,area);
     ceiling=normalizeDiscount({type:'none',value:0,reason:''});
     lighting=normalizeDiscount({type:'none',value:0,reason:''});
@@ -331,29 +496,29 @@ function normalize(b){
     lighting=normalizeDiscount(b.discount?.lighting);
     products=normalizeDiscount(b.discount?.products);
     services=normalizeDiscount({type:'none',value:0,reason:''});
-    servicesDiscount=discountAmount(ceilingSubtotal,ceiling,area)+discountAmount(lightingSubtotal,lighting,area);
+    servicesDiscount=discountAmount(canvasSubtotal,ceiling,area)+discountAmount(serviceSubtotal,lighting,area);
     productsDiscount=discountAmount(productsSubtotal,products,area);
   }
   const ceilingDiscount=servicesDiscount;
   const lightingDiscount=0;
   const discount=servicesDiscount+productsDiscount;
   return {
-    client_name:String(b.client_name||'Без имени').trim()||'Без имени',phone:String(b.phone||'').trim(),address:String(b.address||'').trim(),manager:String(b.manager||'').trim(),notes:String(b.notes||'').trim(),area,
+    client_name:String(b.client_name||'Без имени').trim()||'Без имени',phone:String(b.phone||'').trim(),address:String(b.address||'').trim(),manager:String(b.manager||'').trim(),notes:String(b.notes||'').trim(),area,room_perimeter,calculation_type:b.calculation_type==='quick'?'quick':'detailed',
     items,discount:{services,products,ceiling,lighting},subtotal,discount_amount:discount,total:subtotal-discount,
-    ceilingSubtotal,lightingSubtotal,productsSubtotal,servicesSubtotal:ceilingSubtotal+lightingSubtotal,servicesDiscount,ceilingDiscount,lightingDiscount,productsDiscount,servicesTotal:(ceilingSubtotal+lightingSubtotal)-servicesDiscount,ceilingTotal:ceilingSubtotal-servicesDiscount,lightingTotal:lightingSubtotal,productsTotal:productsSubtotal-productsDiscount
+    canvasSubtotal,serviceSubtotal,productsSubtotal,servicesSubtotal:canvasSubtotal+serviceSubtotal,servicesDiscount,ceilingDiscount,lightingDiscount,productsDiscount,servicesTotal:(canvasSubtotal+serviceSubtotal)-servicesDiscount,canvasTotal:canvasSubtotal,serviceTotal:serviceSubtotal,productsTotal:productsSubtotal-productsDiscount
   };
 }
 app.post('/api/calculations',(req,res)=>{
   ensureDbOpen();
   const p=normalize(req.body||{});
-  const x=db.prepare(`INSERT INTO calculations(client_name,phone,address,manager,notes,area,items_json,discount_json,subtotal,discount_amount,total) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(p.client_name,p.phone,p.address,p.manager,p.notes,p.area,JSON.stringify(p.items),JSON.stringify(p.discount),p.subtotal,p.discount_amount,p.total);
+  const x=db.prepare(`INSERT INTO calculations(client_name,phone,address,manager,notes,area,room_perimeter,calculation_type,items_json,discount_json,subtotal,discount_amount,total) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(p.client_name,p.phone,p.address,p.manager,p.notes,p.area,p.room_perimeter,p.calculation_type,JSON.stringify(p.items),JSON.stringify(p.discount),p.subtotal,p.discount_amount,p.total);
   const id=Number(x.lastInsertRowid);
   res.status(201).json({id,url:publicKpUrl(req,id)});
 });
 app.put('/api/calculations/:id',(req,res)=>{
   ensureDbOpen();
   const id=Number(req.params.id),p=normalize(req.body||{});
-  const x=db.prepare(`UPDATE calculations SET client_name=?,phone=?,address=?,manager=?,notes=?,area=?,items_json=?,discount_json=?,subtotal=?,discount_amount=?,total=?,updated_at=datetime('now','localtime') WHERE id=?`).run(p.client_name,p.phone,p.address,p.manager,p.notes,p.area,JSON.stringify(p.items),JSON.stringify(p.discount),p.subtotal,p.discount_amount,p.total,id);
+  const x=db.prepare(`UPDATE calculations SET client_name=?,phone=?,address=?,manager=?,notes=?,area=?,room_perimeter=?,calculation_type=?,items_json=?,discount_json=?,subtotal=?,discount_amount=?,total=?,updated_at=datetime('now','localtime') WHERE id=?`).run(p.client_name,p.phone,p.address,p.manager,p.notes,p.area,p.room_perimeter,p.calculation_type,JSON.stringify(p.items),JSON.stringify(p.discount),p.subtotal,p.discount_amount,p.total,id);
   if(!x.changes) return res.status(404).json({error:'Расчёт не найден'});
   res.json({id,url:publicKpUrl(req,id)});
 });
@@ -364,6 +529,15 @@ app.delete('/api/calculations/:id',(req,res)=>{
   res.json({ok:true});
 });
 
+function formatDateTime(value){
+  const str=String(value||'');
+  const m=str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if(m)return `${m[3]}.${m[2]}.${m[1]}, ${m[4]}:${m[5]}:${m[6]}`;
+  const d=new Date(str);
+  if(Number.isNaN(d.getTime()))return str;
+  const pad=n=>String(n).padStart(2,'0');
+  return `${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
 function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function discountLabel(d){
   const type=d?.type||'none', value=Number(d?.value)||0;
@@ -375,60 +549,46 @@ function discountLabel(d){
   return 'Без скидки';
 }
 function cpHtml(c){
-  const ceiling=c.items.filter(x=>x.calc_group==='ceiling');
-  const lighting=c.items.filter(x=>x.calc_group==='lighting');
-  const products=c.items.filter(x=>x.calc_group==='products');
-  const ceilingSubtotal=ceiling.reduce((s,x)=>s+(Number(x.qty)||0)*(Number(x.price)||0),0);
-  const lightingSubtotal=lighting.reduce((s,x)=>s+(Number(x.qty)||0)*(Number(x.price)||0),0);
+  const allItems=(c.items||[]).map(x=>({...x,calc_group:normalizedItemGroup(x)}));
+  const canvas=allItems.filter(x=>x.calc_group==='canvas');
+  const services=allItems.filter(x=>x.calc_group==='services');
+  const products=allItems.filter(x=>x.calc_group==='products');
+  const canvasSubtotal=canvas.reduce((s,x)=>s+(Number(x.qty)||0)*(Number(x.price)||0),0);
+  const servicesSubtotal=services.reduce((s,x)=>s+(Number(x.qty)||0)*(Number(x.price)||0),0);
   const productsSubtotal=products.reduce((s,x)=>s+(Number(x.qty)||0)*(Number(x.price)||0),0);
-  const servicesSubtotal=ceilingSubtotal+lightingSubtotal;
+  const combinedServicesSubtotal=canvasSubtotal+servicesSubtotal;
   const productsDiscount=discountAmount(productsSubtotal, normalizeDiscount(c.discount?.products), Number(c.area)||0);
-
-  // В обычном интерфейсе скидка на услуги — ОДНА общая (потолки+освещение вместе),
-  // это ровно то, что хранится в c.discount.services. Раздельные c.discount.ceiling /
-  // c.discount.lighting — только для старых записей, сделанных в прошлом формате
-  // (до объединения в одну скидку на услуги). Раньше здесь ошибочно всегда
-  // использовались именно ceiling/lighting, из-за чего в печатной КП скидка на
-  // услуги пропадала, а итоговая сумма завышалась.
   const servicesDiscountInfo=normalizeDiscount(c.discount?.services);
   const legacyCeilingInfo=normalizeDiscount(c.discount?.ceiling);
   const legacyLightingInfo=normalizeDiscount(c.discount?.lighting);
   const useLegacySplit = servicesDiscountInfo.type==='none' && (legacyCeilingInfo.type!=='none' || legacyLightingInfo.type!=='none');
-
-  let servicesDiscount, servicesHtml;
+  let servicesDiscount;
+  if(useLegacySplit){
+    const oldLighting=allItems.filter(x=>LEGACY_LIGHTING_SECTIONS.has(x.section)).reduce((s,x)=>s+(Number(x.qty)||0)*(Number(x.price)||0),0);
+    const oldCeiling=Math.max(0,combinedServicesSubtotal-oldLighting);
+    servicesDiscount=discountAmount(oldCeiling,legacyCeilingInfo,Number(c.area)||0)+discountAmount(oldLighting,legacyLightingInfo,Number(c.area)||0);
+  }else servicesDiscount=discountAmount(combinedServicesSubtotal,servicesDiscountInfo,Number(c.area)||0);
+  const canvasDiscount=combinedServicesSubtotal?servicesDiscount*(canvasSubtotal/combinedServicesSubtotal):0;
+  const materialDiscount=servicesDiscount-canvasDiscount;
+  const appliedServicesDiscount=useLegacySplit?(legacyCeilingInfo.type!=='none'?legacyCeilingInfo:legacyLightingInfo):servicesDiscountInfo;
   const rub=v=>`${Number(v||0).toLocaleString('ru-RU',{maximumFractionDigits:2})} ₽`;
-  const rows=(arr)=>arr.map(x=>`<tr><td class="section-cell">${esc(x.section||'')}</td><td class="item-cell">${esc(x.name)}</td><td class="unit-cell">${esc(x.unit)}</td><td class="r qty-cell">${Number(x.qty)||0}</td><td class="r money-cell">${rub(x.price)}</td><td class="r money-cell strong">${rub((Number(x.qty)||0)*(Number(x.price)||0))}</td></tr>`).join('');
-  const subTable=(label,arr)=>arr.length?`<div class="sub-block"><div class="sub-title">${esc(label)}</div><div class="table-shell"><table><colgroup><col class="c-section"><col class="c-item"><col class="c-unit"><col class="c-qty"><col class="c-price"><col class="c-sum"></colgroup>
-      <thead><tr><th>Раздел</th><th>Позиция</th><th>Ед.</th><th class="r">Кол-во</th><th class="r">Цена</th><th class="r">Сумма</th></tr></thead>
-      <tbody>${rows(arr)}</tbody>
-    </table></div></div>`:'';
+  const rows=(arr)=>arr.map((x,i)=>`<tr><td class="r">${i+1}.</td><td class="item-cell">${esc(x.name)}</td><td class="r qty-cell">${Number(x.qty)||0}</td><td class="unit-cell">${esc(x.unit)}</td><td class="r money-cell">${rub(x.price)}</td><td class="r money-cell strong">${rub((Number(x.qty)||0)*(Number(x.price)||0))}</td></tr>`).join('');
   const mini=(sub,disc,d)=>`<div class="mini"><div><span>Подытог</span><b>${rub(sub)}</b></div><div class="discount-line"><span>${esc(discountLabel(d))}</span><b>− ${rub(disc)}</b></div>${d?.reason?`<div class="comment-line"><span>Комментарий к скидке</span><span>${esc(d.reason)}</span></div>`:''}</div>`;
-  const block=(title,arr,sub,disc,total,d)=>arr.length?`<section class="estimate-section">
-    <div class="section-title"><span>${esc(title)}</span><b>${rub(total)}</b></div>
-    <div class="table-shell"><table><colgroup><col class="c-section"><col class="c-item"><col class="c-unit"><col class="c-qty"><col class="c-price"><col class="c-sum"></colgroup>
-      <thead><tr><th>Раздел</th><th>Позиция</th><th>Ед.</th><th class="r">Кол-во</th><th class="r">Цена</th><th class="r">Сумма</th></tr></thead>
+  const block=(title,arr,sub,disc,d,extra='')=>arr.length?`<section class="estimate-section">
+    <div class="section-title"><span>${esc(title)}</span><b>${rub(sub-disc)}</b></div>
+    ${extra}
+    <div class="table-shell"><table><colgroup><col class="c-num"><col class="c-item"><col class="c-qty"><col class="c-unit"><col class="c-price"><col class="c-sum"></colgroup>
+      <thead><tr><th>№</th><th>Наименование</th><th class="r">Кол.</th><th>Ед.</th><th class="r">Цена</th><th class="r">Итого</th></tr></thead>
       <tbody>${rows(arr)}</tbody>
     </table></div>
     ${mini(sub,disc,d)}
   </section>`:'';
-
-  if (useLegacySplit) {
-    const ceilingDiscount=discountAmount(ceilingSubtotal, legacyCeilingInfo, Number(c.area)||0);
-    const lightingDiscount=discountAmount(lightingSubtotal, legacyLightingInfo, Number(c.area)||0);
-    servicesDiscount=ceilingDiscount+lightingDiscount;
-    servicesHtml=block('Потолки и монтаж',ceiling,ceilingSubtotal,ceilingDiscount,ceilingSubtotal-ceilingDiscount,legacyCeilingInfo)
-               + block('Монтаж освещения',lighting,lightingSubtotal,lightingDiscount,lightingSubtotal-lightingDiscount,legacyLightingInfo);
-  } else {
-    servicesDiscount=discountAmount(servicesSubtotal, servicesDiscountInfo, Number(c.area)||0);
-    servicesHtml=(ceiling.length||lighting.length)?`<section class="estimate-section">
-    <div class="section-title"><span>Услуги</span><b>${rub(servicesSubtotal-servicesDiscount)}</b></div>
-    ${subTable('Потолки и монтаж',ceiling)}
-    ${subTable('Монтаж освещения',lighting)}
-    ${mini(servicesSubtotal,servicesDiscount,servicesDiscountInfo)}
-  </section>`:'';
-  }
-
-  const subtotal=servicesSubtotal+productsSubtotal;
+  const canvasArea=c.calculation_type==='quick'?0:canvas.reduce((s,x)=>s+(Number(x.qty)||0),0);
+  const areaLine=canvasArea?`<div class="area-line">Общая площадь полотен: <b>${Number(canvasArea).toLocaleString('ru-RU',{maximumFractionDigits:2})} м²</b></div>`:'';
+  const servicesHtml=block('ПОЛОТНА',canvas,canvasSubtotal,canvasDiscount,appliedServicesDiscount,areaLine)
+    +block('УСЛУГИ И МАТЕРИАЛЫ',services,servicesSubtotal,materialDiscount,appliedServicesDiscount)
+    +block('ТОВАРЫ',products,productsSubtotal,productsDiscount,normalizeDiscount(c.discount?.products));
+  const subtotal=combinedServicesSubtotal+productsSubtotal;
   const discount=servicesDiscount+productsDiscount;
   const total=subtotal-discount;
   const brandRed='#c8102e', brandBlue='#1f477d', ink='#172335';
@@ -444,7 +604,7 @@ body{margin:0;background:#edf1f5;color:${ink};font-family:-apple-system,BlinkMac
 .content{padding:0 8mm 8mm}.client{display:flex;align-items:flex-start;gap:0;padding:9px 0;margin-top:10px;background:#fff;border-top:1px solid #e1e6ed;border-bottom:1px solid #e1e6ed}.client div{flex:1 1 0;min-width:0;padding:0 10px;border-right:1px solid #e1e6ed;overflow-wrap:anywhere}.client div:first-child{padding-left:0}.client div:last-child{padding-right:0;border-right:0}.client div:nth-child(3){flex-grow:1.7}.client b{display:block;margin-bottom:3px;font-size:8px;line-height:1.2;text-transform:uppercase;letter-spacing:.07em;color:#737f8c}.client div:not(:has(b)){color:${ink};font-weight:550}
 .estimate-section{margin-top:14px;break-inside:auto}.section-title{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;padding:0 0 5px;margin-bottom:6px;border-bottom:2px solid ${brandBlue};font-size:13px;line-height:1.2;font-weight:850;color:${brandBlue}}.section-title b{font-size:13px;white-space:nowrap;color:${brandRed}}
 .sub-block{margin-bottom:9px}.sub-block:last-of-type{margin-bottom:0}.sub-title{font-size:10px;font-weight:750;color:#566271;margin-bottom:4px}
-.table-shell{width:100%;overflow:hidden;border:1px solid #dfe5eb;border-radius:7px}table{width:100%;min-width:0;border-collapse:collapse;table-layout:fixed}th,td{padding:5px 6px;border-bottom:1px solid #e8ecf0;text-align:left;vertical-align:top;overflow-wrap:anywhere;word-break:normal;font-size:9.5px;line-height:1.25}th{background:#f2f5f8;color:#566271;font-size:9px;font-weight:750;white-space:nowrap}tbody tr{break-inside:avoid}tbody tr:nth-child(even){background:#fbfcfd}tbody tr:last-child td{border-bottom:0}.r{text-align:right;white-space:nowrap}.strong{font-weight:750}.c-section{width:11%}.c-item{width:38%}.c-unit{width:7%}.c-qty{width:9%}.c-price{width:16%}.c-sum{width:19%}
+.area-line{margin:-1px 0 6px;color:#566271;font-size:9.5px}.area-line b{color:${ink}}.table-shell{width:100%;overflow:hidden;border:1px solid #dfe5eb;border-radius:7px}table{width:100%;min-width:0;border-collapse:collapse;table-layout:fixed}th,td{padding:5px 6px;border-bottom:1px solid #e8ecf0;text-align:left;vertical-align:top;overflow-wrap:anywhere;word-break:normal;font-size:9.5px;line-height:1.25}th{background:#f2f5f8;color:#566271;font-size:9px;font-weight:750;white-space:nowrap}tbody tr{break-inside:avoid}tbody tr:nth-child(even){background:#fbfcfd}tbody tr:last-child td{border-bottom:0}.r{text-align:right;white-space:nowrap}.strong{font-weight:750}.c-num{width:5%}.c-item{width:45%}.c-qty{width:8%}.c-unit{width:8%}.c-price{width:16%}.c-sum{width:18%}
 .mini{width:320px;max-width:100%;margin:7px 0 0 auto;padding:7px 9px;border:1px solid #e1e6ed;border-radius:8px;background:#fafbfd}.mini>div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:2px 0;color:#505c69;font-size:9.5px;align-items:start}.mini b{color:${ink}}.mini .discount-line{color:${brandRed}}.mini .discount-line b{color:${brandRed}}.mini .comment-line{border-top:1px dashed #dfe4e9;margin-top:3px;padding-top:5px}.mini .comment-line span:last-child{max-width:190px;text-align:right;overflow-wrap:anywhere}
 .grand{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:10px;padding:9px 12px;border-radius:8px;background:${brandBlue};color:#fff;font-size:14px;line-height:1.2;font-weight:850;break-inside:avoid}.grand span:last-child{font-size:16px;white-space:nowrap}.note{margin-top:7px;padding:7px 10px;border-left:3px solid ${brandRed};border-radius:0 7px 7px 0;background:#fafbfd;color:#596573;font-size:9.5px;break-inside:avoid}
 .print{position:fixed;top:18px;right:18px;z-index:20;border:1px solid ${brandRed};background:${brandRed};color:#fff;padding:11px 15px;border-radius:9px;cursor:pointer;font:700 14px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;box-shadow:0 8px 20px rgba(200,16,46,.18);transition:transform .15s,filter .15s}.print:hover{filter:brightness(.95);transform:translateY(-1px)}.print:focus-visible{outline:3px solid rgba(31,71,125,.25);outline-offset:2px}
@@ -459,7 +619,7 @@ body{margin:0;background:#edf1f5;color:${ink};font-family:-apple-system,BlinkMac
   .table-shell{overflow:visible!important}
   table{width:100%!important;min-width:0!important}
 }
-</style></head><body><button class="print" onclick="window.print()">Печать / PDF</button><main class="page"><div class="a4-limit" aria-hidden="true"></div><header class="hero"><div class="brand-row"><div><div class="brand">Потолочная №1</div><div class="brand-sub">Натяжные потолки и освещение</div></div><div class="badge">Коммерческое предложение</div></div><div class="title">Расчёт стоимости</div><div class="meta">№${c.id} · ${esc(c.created_at)}</div></header><div class="content"><div class="client">${c.client_name?`<div><b>Клиент</b>${esc(c.client_name)}</div>`:''}${c.phone?`<div><b>Телефон</b>${esc(c.phone)}</div>`:''}${c.address?`<div><b>Адрес объекта</b>${esc(c.address)}</div>`:''}${c.manager?`<div><b>Менеджер</b>${esc(c.manager)}</div>`:''}${c.area?`<div><b>Площадь</b>${esc(c.area)} м²</div>`:''}</div>${servicesHtml}${block('Товары — освещение',products,productsSubtotal,productsDiscount,productsSubtotal-productsDiscount,c.discount.products)}<div class="grand"><span>Итого к оплате</span><span>${rub(total)}</span></div>${c.notes?`<div class="note"><b>Комментарий:</b> ${esc(c.notes)}</div>`:''}</div></main></body></html>`;
+</style></head><body><button class="print" onclick="window.print()">Печать / PDF</button><main class="page"><div class="a4-limit" aria-hidden="true"></div><header class="hero"><div class="brand-row"><div><div class="brand">Потолочная №1</div><div class="brand-sub">Натяжные потолки и освещение</div></div><div class="badge">${c.calculation_type==='quick'?'Быстрый расчёт':'Коммерческое предложение'}</div></div><div class="title">Расчёт стоимости</div><div class="meta">№${c.id} · ${esc(formatDateTime(c.created_at))}</div></header><div class="content"><div class="client">${c.client_name?`<div><b>Клиент</b>${esc(c.client_name)}</div>`:''}${c.phone?`<div><b>Телефон</b>${esc(c.phone)}</div>`:''}${c.address?`<div><b>Адрес объекта</b>${esc(c.address)}</div>`:''}${c.manager?`<div><b>Менеджер</b>${esc(c.manager)}</div>`:''}${c.area?`<div><b>Площадь помещения</b>${esc(c.area)} м²</div>`:''}${c.room_perimeter?`<div><b>Периметр помещения</b>${esc(c.room_perimeter)} м</div>`:''}</div>${servicesHtml}<div class="grand"><span>ОБЩАЯ СТОИМОСТЬ</span><span>${rub(total)}</span></div>${c.notes?`<div class="note"><b>Комментарий:</b> ${esc(c.notes)}</div>`:''}</div></main></body></html>`;
 }
 app.get('/kp/:id',(req,res)=>{
   ensureDbOpen();const c=getCalc(Number(req.params.id));if(!c)return res.status(404).send('КП не найдено');res.setHeader('Cache-Control','no-store');res.send(cpHtml(c));});
