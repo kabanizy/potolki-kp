@@ -515,6 +515,17 @@ app.post('/api/calculations',(req,res)=>{
   const id=Number(x.lastInsertRowid);
   res.status(201).json({id,url:publicKpUrl(req,id)});
 });
+// Copy stored values verbatim: a changed catalogue must not alter an old estimate.
+app.post('/api/calculations/:id/duplicate',(req,res)=>{
+  ensureDbOpen();
+  const sourceId=Number(req.params.id);
+  if(!Number.isSafeInteger(sourceId)||sourceId<1)return res.status(404).json({error:'Расчёт не найден'});
+  const x=db.prepare(`INSERT INTO calculations(client_name,phone,address,manager,notes,area,room_perimeter,calculation_type,items_json,discount_json,subtotal,discount_amount,total)
+    SELECT client_name,phone,address,manager,notes,area,room_perimeter,calculation_type,items_json,discount_json,subtotal,discount_amount,total FROM calculations WHERE id=?`).run(sourceId);
+  if(!x.changes)return res.status(404).json({error:'Расчёт не найден'});
+  const id=Number(x.lastInsertRowid);
+  res.status(201).json({id,source_id:sourceId,url:publicKpUrl(req,id)});
+});
 app.put('/api/calculations/:id',(req,res)=>{
   ensureDbOpen();
   const id=Number(req.params.id),p=normalize(req.body||{});
