@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { DatabaseSync } = require('node:sqlite');
 
 const app = express();
+app.set('case sensitive routing',true);
 const PORT = process.env.PORT || 3000;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data.sqlite');
 const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
@@ -23,108 +24,6 @@ function ensureDbOpen() {
 const LEGACY_LIGHTING_SECTIONS = new Set(['Монтаж освещения', 'Монтаж треков']);
 const PRICE_GROUPS = new Set(['canvas', 'services', 'products']);
 const AUTO_INSTALL_NAME = 'Установка полотна';
-
-// ===================== ОБЩИЙ ВХОД ДЛЯ МЕНЕДЖЕРОВ =====================
-// Один общий логин/пароль на всех менеджеров (не персональные аккаунты).
-// Задаются через переменные окружения APP_USER / APP_PASS на сервере —
-// значения ниже используются только если эти переменные не заданы.
-// Страницы коммерческих предложений (/kp/:id) НЕ защищены — по ним должен
-// открываться доступ без авторизации, чтобы клиент мог просто перейти по ссылке.
-const APP_USER = process.env.APP_USER || 'manager';
-const APP_PASS = process.env.APP_PASS || 'potolki2026';
-const SESSION_COOKIE = 'sid';
-// Действующие сессии храним в памяти процесса — этого достаточно для одного
-// общего аккаунта на небольшую команду. При перезапуске сервера менеджерам
-// нужно будет войти заново.
-const sessions = new Set();
-
-function parseCookies(req) {
-  const header = req.headers.cookie;
-  const out = {};
-  if (!header) return out;
-  header.split(';').forEach(pair => {
-    const idx = pair.indexOf('=');
-    if (idx === -1) return;
-    const k = pair.slice(0, idx).trim();
-    const v = pair.slice(idx + 1).trim();
-    if (k) out[k] = decodeURIComponent(v);
-  });
-  return out;
-}
-function isLoggedIn(req) {
-  const cookies = parseCookies(req);
-  return !!(cookies[SESSION_COOKIE] && sessions.has(cookies[SESSION_COOKIE]));
-}
-function setSessionCookie(req, res, token) {
-  const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
-  const parts = [`${SESSION_COOKIE}=${encodeURIComponent(token)}`, 'Path=/', 'HttpOnly', 'SameSite=Lax', `Max-Age=${60 * 60 * 24 * 30}`];
-  if (secure) parts.push('Secure');
-  res.setHeader('Set-Cookie', parts.join('; '));
-}
-function clearSessionCookie(res) {
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; Max-Age=0`);
-}
-function safeNextPath(v) {
-  const s = String(v || '');
-  return (s.startsWith('/') && !s.startsWith('//') && !s.startsWith('/login')) ? s : '/';
-}
-function loginPageHtml({ error, next } = {}) {
-  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Вход — Потолочная №1</title><style>
-*{box-sizing:border-box}
-body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#f3f6f9 0%,#edf1f5 100%);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#1b2430}
-.box{width:min(380px,calc(100vw - 32px));background:#fff;border:1px solid #dfe4ea;border-radius:18px;box-shadow:0 20px 48px rgba(25,59,104,.14);padding:30px 28px}
-.brand{display:flex;align-items:center;gap:12px;margin-bottom:22px}
-.brand-logo{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#cf1734,#a90f27);color:#fff;display:grid;place-items:center;font-weight:900;font-size:17px}
-.brand div span{display:block;color:#244b7d;font-size:11px;letter-spacing:.09em;text-transform:uppercase}
-.brand div strong{font-size:17px;color:#cf1734}
-h1{font-size:19px;margin:0 0 18px;color:#193b68}
-label{display:block;font-size:12.5px;font-weight:700;color:#4f5b67;margin-bottom:6px}
-input{width:100%;padding:11px 13px;border:1px solid #ccd4dd;border-radius:8px;font-size:15px;margin-bottom:16px;outline:0}
-input:focus{border-color:#244b7d;box-shadow:0 0 0 4px rgba(36,75,125,.16)}
-button{width:100%;padding:12px;border:0;border-radius:8px;background:#244b7d;color:#fff;font-weight:800;font-size:15px;cursor:pointer}
-button:hover{filter:brightness(1.06)}
-.err{background:#fdf1f3;color:#a90f27;border:1px solid #f0c3cc;border-radius:8px;padding:10px 12px;font-size:13.5px;margin-bottom:16px}
-</style></head><body><form class="box" method="post" action="/login">
-<div class="brand"><div class="brand-logo">№1</div><div><span>Натяжные потолки</span><strong>Потолочная №1</strong></div></div>
-<h1>Вход для менеджеров</h1>
-${error ? `<div class="err">Неверный логин или пароль. Попробуйте ещё раз.</div>` : ''}
-<input type="hidden" name="next" value="${(next || '/').replace(/"/g, '&quot;')}">
-<label for="login">Логин</label>
-<input id="login" name="login" autocomplete="username" autofocus>
-<label for="password">Пароль</label>
-<input id="password" name="password" type="password" autocomplete="current-password">
-<button type="submit">Войти</button>
-</form></body></html>`;
-}
-app.get('/login', (req, res) => {
-  if (isLoggedIn(req)) return res.redirect(safeNextPath(req.query.next));
-  res.send(loginPageHtml({ error: req.query.error === '1', next: req.query.next }));
-});
-app.post('/login', express.urlencoded({ extended: false }), (req, res) => {
-  const login = String(req.body?.login || '');
-  const password = String(req.body?.password || '');
-  const next = safeNextPath(req.body?.next);
-  if (login === APP_USER && password === APP_PASS) {
-    const token = crypto.randomBytes(24).toString('hex');
-    sessions.add(token);
-    setSessionCookie(req, res, token);
-    return res.redirect(next);
-  }
-  res.redirect(`/login?error=1&next=${encodeURIComponent(next)}`);
-});
-app.get('/logout', (req, res) => {
-  const cookies = parseCookies(req);
-  if (cookies[SESSION_COOKIE]) sessions.delete(cookies[SESSION_COOKIE]);
-  clearSessionCookie(res);
-  res.redirect('/login');
-});
-function requireSharedLogin(req, res, next) {
-  if (req.path === '/kp' || req.path.startsWith('/kp/')) return next();
-  if (req.path === '/login' || req.path === '/logout') return next();
-  if (isLoggedIn(req)) return next();
-  if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Требуется авторизация' });
-  res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
-}
 
 function publicKpUrl(req, id) {
   const base = PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
@@ -241,7 +140,7 @@ function seedQuickSettings(){
     ['Углы','services',0],
     ['Монтаж светильников','services',1],
     ['Люстры','services',2],
-    ['Керамогранит','services',3],
+    ['Кафель / керамогранит','services',3],
     ['Карниз','services',4],
     ['Дополнительные работы','services',5]
   ].forEach(([name,group,order])=>ins.run(name,group,order));
@@ -291,18 +190,8 @@ db.exec(`
   }
 })();
 
-// Цена "Запилка угла трека" раньше не была указана в прайсе (price=NULL).
-// Заполняем её только там, где менеджер ещё не ввёл цену вручную сам —
-// уже сохранённые ручные значения не трогаем.
-(function fillMissingTrackCornerPrice(){
-  ensureDbOpen();
-  try {
-    db.prepare(`UPDATE price_items SET price=1500 WHERE name='Запилка угла трека' AND price IS NULL`).run();
-  } catch (e) { /* колонка/таблица уже в порядке — ничего не делаем */ }
-})();
+const features=require('./features').setup({app,db,dbPath:DB_PATH,getPrices,getCalc,normalize,cpHtml,publicKpUrl});
 
-app.use(requireSharedLogin);
-app.use(express.json({limit:'2mb'}));
 app.use(express.static(path.join(__dirname,'public')));
 
 function getPrices(){
@@ -583,7 +472,7 @@ function cpHtml(c){
   const materialDiscount=servicesDiscount-canvasDiscount;
   const appliedServicesDiscount=useLegacySplit?(legacyCeilingInfo.type!=='none'?legacyCeilingInfo:legacyLightingInfo):servicesDiscountInfo;
   const rub=v=>`${Number(v||0).toLocaleString('ru-RU',{maximumFractionDigits:2})} ₽`;
-  const rows=(arr)=>arr.map((x,i)=>`<tr><td class="r">${i+1}.</td><td class="item-cell">${esc(x.name)}</td><td class="r qty-cell">${Number(x.qty)||0}</td><td class="unit-cell">${esc(x.unit)}</td><td class="r money-cell">${rub(x.price)}</td><td class="r money-cell strong">${rub((Number(x.qty)||0)*(Number(x.price)||0))}</td></tr>`).join('');
+  const rows=(arr)=>arr.map((x,i)=>`<tr><td class="r">${i+1}.</td><td class="item-cell">${esc(x.name)}${x.include_photo&&x.photo_id?`<img class="item-photo" src="/kp/${c.id}/photo/${encodeURIComponent(x.photo_id)}${c.public_token?'?t='+encodeURIComponent(c.public_token):''}" alt="${esc(x.name)}">`:''}</td><td class="r qty-cell">${Number(x.qty)||0}</td><td class="unit-cell">${esc(x.unit)}</td><td class="r money-cell">${rub(x.price)}</td><td class="r money-cell strong">${rub((Number(x.qty)||0)*(Number(x.price)||0))}</td></tr>`).join('');
   const mini=(sub,disc,d)=>`<div class="mini"><div><span>Подытог</span><b>${rub(sub)}</b></div><div class="discount-line"><span>${esc(discountLabel(d))}</span><b>− ${rub(disc)}</b></div>${d?.reason?`<div class="comment-line"><span>Комментарий к скидке</span><span>${esc(d.reason)}</span></div>`:''}</div>`;
   const block=(title,arr,sub,disc,d,extra='')=>arr.length?`<section class="estimate-section">
     <div class="section-title"><span>${esc(title)}</span><b>${rub(sub-disc)}</b></div>
@@ -614,7 +503,7 @@ body{margin:0;background:#edf1f5;color:${ink};font-family:-apple-system,BlinkMac
 .brand-row{display:flex;align-items:center;justify-content:space-between;gap:16px}.brand{font-size:15px;font-weight:850;color:${brandRed};letter-spacing:.01em}.brand-sub{margin-top:1px;font-size:9px;color:#687484}.badge{padding:4px 8px;border-radius:999px;background:#eef3f8;color:${brandBlue};font-size:9.5px;font-weight:750}.title{margin:8px 0 3px;font-size:22px;line-height:1.12;font-weight:850;letter-spacing:-.025em;color:${brandBlue}}.meta{font-size:9.5px;color:#687483}
 .content{padding:0 8mm 8mm}.client{display:flex;align-items:flex-start;gap:0;padding:9px 0;margin-top:10px;background:#fff;border-top:1px solid #e1e6ed;border-bottom:1px solid #e1e6ed}.client div{flex:1 1 0;min-width:0;padding:0 10px;border-right:1px solid #e1e6ed;overflow-wrap:anywhere}.client div:first-child{padding-left:0}.client div:last-child{padding-right:0;border-right:0}.client div:nth-child(3){flex-grow:1.7}.client b{display:block;margin-bottom:3px;font-size:8px;line-height:1.2;text-transform:uppercase;letter-spacing:.07em;color:#737f8c}.client div:not(:has(b)){color:${ink};font-weight:550}
 .estimate-section{margin-top:14px;break-inside:auto}.section-title{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;padding:0 0 5px;margin-bottom:6px;border-bottom:2px solid ${brandBlue};font-size:13px;line-height:1.2;font-weight:850;color:${brandBlue}}.section-title b{font-size:13px;white-space:nowrap;color:${brandRed}}
-.sub-block{margin-bottom:9px}.sub-block:last-of-type{margin-bottom:0}.sub-title{font-size:10px;font-weight:750;color:#566271;margin-bottom:4px}
+.item-photo{display:block;width:auto;max-width:100%;height:auto;max-height:42mm;object-fit:contain;margin-top:6px;break-inside:avoid}.sub-block{margin-bottom:9px}.sub-block:last-of-type{margin-bottom:0}.sub-title{font-size:10px;font-weight:750;color:#566271;margin-bottom:4px}
 .area-line{margin:-1px 0 6px;color:#566271;font-size:9.5px}.area-line b{color:${ink}}.table-shell{width:100%;overflow:hidden;border:1px solid #dfe5eb;border-radius:7px}table{width:100%;min-width:0;border-collapse:collapse;table-layout:fixed}th,td{padding:5px 6px;border-bottom:1px solid #e8ecf0;text-align:left;vertical-align:top;overflow-wrap:anywhere;word-break:normal;font-size:9.5px;line-height:1.25}th{background:#f2f5f8;color:#566271;font-size:9px;font-weight:750;white-space:nowrap}tbody tr{break-inside:avoid}tbody tr:nth-child(even){background:#fbfcfd}tbody tr:last-child td{border-bottom:0}.r{text-align:right;white-space:nowrap}.strong{font-weight:750}.c-num{width:5%}.c-item{width:45%}.c-qty{width:8%}.c-unit{width:8%}.c-price{width:16%}.c-sum{width:18%}
 .mini{width:320px;max-width:100%;margin:7px 0 0 auto;padding:7px 9px;border:1px solid #e1e6ed;border-radius:8px;background:#fafbfd}.mini>div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:2px 0;color:#505c69;font-size:9.5px;align-items:start}.mini b{color:${ink}}.mini .discount-line{color:${brandRed}}.mini .discount-line b{color:${brandRed}}.mini .comment-line{border-top:1px dashed #dfe4e9;margin-top:3px;padding-top:5px}.mini .comment-line span:last-child{max-width:190px;text-align:right;overflow-wrap:anywhere}
 .grand{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:10px;padding:9px 12px;border-radius:8px;background:${brandBlue};color:#fff;font-size:14px;line-height:1.2;font-weight:850;break-inside:avoid}.grand span:last-child{font-size:16px;white-space:nowrap}.note{margin-top:7px;padding:7px 10px;border-left:3px solid ${brandRed};border-radius:0 7px 7px 0;background:#fafbfd;color:#596573;font-size:9.5px;break-inside:avoid}

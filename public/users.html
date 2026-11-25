@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Пользователи</title>
+<link rel="stylesheet" href="/account.css">
+<main>
+  <nav></nav>
+  <h1>Пользователи</h1>
+  <div id="message" role="status" class="message"></div>
+  <section class="card" id="editor">
+    <h2 id="editorTitle">Создать пользователя</h2>
+    <form id="userForm">
+      <div class="grid">
+        <div><label>Имя<input name="name" required maxlength="120"></label></div>
+        <div><label>Логин<input name="login" required minlength="3" maxlength="80"></label></div>
+        <div><label>Пароль<input name="password" type="password" minlength="8" maxlength="128" autocomplete="new-password"></label></div>
+        <div><label>Роль<select name="role"><option value="manager">Менеджер</option><option value="admin">Главный администратор</option></select></label></div>
+        <div><label>Статус<select name="active"><option value="1">Активен</option><option value="0">Заблокирован</option></select></label></div>
+      </div>
+      <p class="muted" id="editorHint">При редактировании оставьте пароль пустым, чтобы сохранить текущий. Изменение аккаунта завершает его действующие сессии.</p>
+      <div class="actions"><button>Сохранить</button><button type="button" class="ghost" id="cancel">Новый пользователь</button></div>
+    </form>
+  </section>
+  <section class="card table-wrap">
+    <table><thead><tr><th>ID</th><th>Имя</th><th>Логин</th><th>Роль</th><th>Статус</th><th>Регистрация</th><th>Действия</th></tr></thead><tbody id="list"></tbody></table>
+  </section>
+  <section class="card" id="permissionsBox" hidden>
+    <h2 id="permissionsTitle"></h2>
+    <form id="permissionsForm"><div class="permissions" id="permissionsList"></div><div class="actions"><button>Сохранить права</button></div></form>
+  </section>
+</main>
+<script src="/account.js"></script>
+<script>
+let users=[],editing=null,permissionsId=null;
+const form=document.getElementById('userForm'),roleField=form.elements.role,activeField=form.elements.active;
+function isSelf(user){return Number(user?.id)===Number(account?.user?.id)}
+function configureEditor(user=null){
+  const selfAdmin=user&&isSelf(user)&&user.role==='admin';
+  roleField.disabled=account.user.role!=='admin'||!user||selfAdmin;
+  activeField.disabled=!!selfAdmin;
+  roleField.querySelector('option[value="admin"]').disabled=!user||account.user.role!=='admin'||selfAdmin;
+  document.getElementById('editorHint').textContent=selfAdmin
+    ?'Свой аккаунт главного администратора нельзя заблокировать или понизить. Чтобы передать роль, откройте другого активного пользователя и выберите «Главный администратор».'
+    :'При редактировании оставьте пароль пустым, чтобы сохранить текущий. Изменение аккаунта завершает его действующие сессии.';
+}
+async function loadUsers(){
+  users=await request('/api/users');
+  document.getElementById('list').innerHTML=users.map(u=>{const self=isSelf(u);return `<tr><td>${u.id}</td><td>${htmlEscape(u.name)}${self?' <span class="muted">(вы)</span>':''}</td><td>${htmlEscape(u.login)}</td><td>${u.role==='admin'?'Главный администратор':'Менеджер'}</td><td>${u.active?'Активен':'Заблокирован'}</td><td>${htmlEscape(u.created_at)}</td><td><div class="actions">${allowed('manage_users')?`<button class="ghost" onclick="editUser(${u.id})">Изменить</button>${self?'':`<button class="danger" onclick="deleteUser(${u.id})">Удалить</button>`}`:''}${allowed('manage_permissions')&&u.role!=='admin'?`<button class="ghost" onclick="editPermissions(${u.id})">Права</button>`:''}</div></td></tr>`}).join('');
+}
+function editUser(id){
+  editing=id;const user=users.find(u=>u.id===id);if(!user)return;
+  for(const key of ['name','login','role'])form.elements[key].value=user[key];
+  activeField.value=user.active?'1':'0';form.elements.password.value='';form.elements.password.required=false;
+  document.getElementById('editorTitle').textContent='Пользователь №'+id;configureEditor(user);form.scrollIntoView({behavior:'smooth'});
+}
+function newUser(){
+  editing=null;form.reset();form.elements.password.required=true;document.getElementById('editorTitle').textContent='Создать пользователя';configureEditor();
+}
+document.getElementById('cancel').onclick=newUser;
+form.onsubmit=async e=>{
+  e.preventDefault();
+  const previous=editing?users.find(u=>u.id===editing):null,data=Object.fromEntries(new FormData(form));
+  data.active=data.active==='1';
+  const transfer=previous&&previous.role!=='admin'&&data.role==='admin';
+  if(transfer){
+    const currentAdmin=users.find(u=>u.role==='admin');
+    const question=`Передать роль главного администратора пользователю «${previous.name}»? ${currentAdmin?`«${currentAdmin.name}» станет менеджером. `:''}Новый администратор должен будет войти заново.`;
+    if(!confirm(question))return;
+    data.confirm_transfer=true;
+  }
+  try{
+    await request('/api/users'+(editing?'/'+editing:''),editing?'PUT':'POST',data);
+    if(transfer){location.href='/';return}
+    await loadUsers();newUser();message('Пользователь сохранён');
+  }catch(error){message(error.message,true)}
+};
+async function deleteUser(id){
+  if(isSelf(users.find(u=>u.id===id))){message('Нельзя удалить свой аккаунт',true);return}
+  if(!confirm('Удалить пользователя? Его расчёты останутся у администратора.'))return;
+  try{await request('/api/users/'+id,'DELETE');await loadUsers();message('Пользователь удалён. Расчёты сохранены.')}catch(error){message(error.message,true)}
+}
+function editPermissions(id){permissionsId=id;const user=users.find(x=>x.id===id);document.getElementById('permissionsBox').hidden=false;document.getElementById('permissionsTitle').textContent='Права: '+user.name;document.getElementById('permissionsList').innerHTML=Object.entries(account.permissions).map(([key,title])=>`<label><input type="checkbox" name="${key}" ${user.permissions[key]?'checked':''} ${allowed(key)?'':'disabled'}>${htmlEscape(title)}</label>`).join('');document.getElementById('permissionsBox').scrollIntoView({behavior:'smooth'})}
+document.getElementById('permissionsForm').onsubmit=async e=>{e.preventDefault();try{const permissions=Object.fromEntries(Object.keys(account.permissions).map(k=>[k,e.target.elements[k].checked]));await request('/api/users/'+permissionsId+'/permissions','PUT',{permissions});await loadUsers();message('Права сохранены. Пользователь войдёт заново.')}catch(error){message(error.message,true)}};
+accountReady().then(()=>{document.getElementById('editor').hidden=!allowed('manage_users');form.elements.password.required=true;configureEditor();return loadUsers()}).catch(error=>message(error.message,true));
+</script>
+</html>

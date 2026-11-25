@@ -4,6 +4,6 @@
   "private": true,
   "description": "Калькулятор тарифов: прайс в SQLite, расчёты, скидки и история",
   "main": "server.js",
-  "scripts": {"start":"node server.js"},
+  "scripts": {"start":"node server.js","test":"node test-integration.cjs","check":"node check-syntax.cjs"},
   "dependencies": {"express":"^5.1.0"}
 }

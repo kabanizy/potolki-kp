@@ -4,5 +4,4 @@ ConditionPathExists=/opt/potolki-kp/data/data.sqlite
 
 [Service]
 Type=oneshot
-ExecStart=/opt/potolki-kp/ops/backup.sh
-
+ExecStart=/bin/sh /opt/potolki-kp/ops/backup.sh

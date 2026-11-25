@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Прайс — Потолочная №1</title>
+<link rel="stylesheet" href="/account.css">
+<main>
+  <nav>
+    <a class="brandmark" href="/catalog.html" aria-label="Потолочная №1 — прайс"><span class="brand-logo">№1</span><span class="brandname"><span>Калькулятор тарифов</span><strong>Потолочная №1</strong></span></a>
+    <div class="nav-actions"><a class="btn ghost small" href="/login">Войти в калькулятор</a></div>
+  </nav>
+  <h1>Прайс</h1>
+  <p class="page-intro">Актуальные цены из общей базы. Для полотен отдельно указана стоимость установки.</p>
+  <input id="search" placeholder="Найти позицию, модель или ширину" aria-label="Поиск по прайсу">
+  <div id="message" class="message" role="status"></div>
+  <div id="catalog"></div>
+</main>
+<script>
+const htmlEscape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const rub=v=>v==null?'—':new Intl.NumberFormat('ru-RU').format(v)+' ₽';
+let catalog=[];
+function message(text,error=false){const el=document.getElementById('message');el.textContent=text;el.className='message'+(error?' error':'')}
+function viewPhoto(id){const dialog=document.createElement('dialog'),image=document.createElement('img'),close=document.createElement('button');dialog.className='photo-dialog photo-viewer';image.src='/public-photo/'+encodeURIComponent(id);image.alt='Фотография позиции';close.textContent='Закрыть';close.className='btn';close.onclick=()=>dialog.close();dialog.onclick=e=>{if(e.target===dialog)dialog.close()};dialog.append(close,image);document.body.append(dialog);dialog.addEventListener('close',()=>dialog.remove());dialog.showModal()}
+function render(){const query=document.getElementById('search').value.toLowerCase();document.getElementById('catalog').innerHTML=catalog.map(section=>{const items=section.items.filter(item=>(item.name+' '+section.name).toLowerCase().includes(query)),hasInstallation=items.some(item=>item.installation_price!=null);return items.length?`<section class="card"><h2>${htmlEscape(section.name)}</h2><div class="table-wrap"><table><thead><tr><th>Позиция / модель / ширина</th><th>Ед.</th><th>Цена</th>${hasInstallation?'<th>Установка</th>':''}<th>Фото</th></tr></thead><tbody>${items.map(item=>`<tr><td>${htmlEscape(item.name)}</td><td>${htmlEscape(item.unit)}</td><td class="price-cell">${rub(item.price)}</td>${hasInstallation?`<td class="price-cell">${rub(item.installation_price)}</td>`:''}<td>${item.photo_id?`<button class="ghost" onclick="viewPhoto('${item.photo_id}')">Посмотреть</button>`:'—'}</td></tr>`).join('')}</tbody></table></div></section>`:''}).join('')||'<p>Ничего не найдено</p>'}
+document.getElementById('search').oninput=render;
+fetch('/api/public-prices',{headers:{Accept:'application/json'}}).then(async response=>{if(!response.ok)throw Error('Не удалось загрузить прайс');return response.json()}).then(rows=>{catalog=rows;render()}).catch(error=>message(error.message,true));
+</script>
+</html>

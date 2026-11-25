@@ -4,4 +4,4 @@ data/
 backups/
 data.sqlite*
 node_modules/
-
+photos/

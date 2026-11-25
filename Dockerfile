@@ -7,6 +7,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --chown=node:node server.js ./
+COPY --chown=node:node features.js ./
 COPY --chown=node:node public ./public
 
 USER node

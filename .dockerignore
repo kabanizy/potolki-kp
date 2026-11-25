@@ -5,8 +5,8 @@ data/
 backups/
 data.sqlite*
 node_modules/
+photos/
 ops/
 compose.yml
 Caddyfile
 README.md
-
