@@ -1,5 +1,5 @@
 // Extend the existing calculator; saved values are restored without consulting today's prices.
-let currentUser=null,featuresReady=false,installationWarning='',savedDiscounts=null,discountsEdited=false;
+let currentUser=null,featuresReady=false,installationWarning='',savedDiscounts=null,discountsEdited=false,savingCalculation=false;
 const permitted=key=>!!currentUser?.permissions[key];
 api=async function(url,opt={}){const r=await fetch(url,{...opt,headers:{'X-Requested-With':'calculator',...opt.headers}});if(r.status===401){location.href='/login';throw Error('Войдите в аккаунт')}const data=await r.json();if(!r.ok)throw Error(data.error||'Ошибка запроса');return data};
 const baseDiscountChanged=discountChanged;
@@ -64,9 +64,38 @@ recalc=function(){baseRecalc();const warning=$('installationWarning');if(warning
 payload=function(){const p=basePayload();return {...p,discount:savedDiscounts&&!discountsEdited?savedDiscounts:p.discount,items:p.items.map(x=>({...x}))}};
 document.addEventListener('input',e=>{if(/^(services|products)Discount/.test(e.target.id))discountsEdited=true});
 document.addEventListener('change',e=>{if(/^(services|products)Discount/.test(e.target.id))discountsEdited=true});
-persistCalculation=async function(){if(installationWarning){showToast(installationWarning,true);return null}const p=payload();if(!p.items.length){showToast('Добавьте хотя бы одну позицию.',true);return null}const r=await api(currentId?'/api/calculations/'+currentId:'/api/calculations',{method:currentId?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});currentId=r.id;await loadHistory();return r};
-saveAndShowLink=async function(){try{const r=await persistCalculation();if(!r)return;const published=await api('/api/calculations/'+r.id+'/publish',{method:'POST'});showLink(published.url);setStatus('КП №'+r.id+' сформировано')}catch(e){showToast(e.message,true)}};
-showLink=function(url){if(!url||!permitted('publish_kp')){$('linkbox').classList.remove('show');return}$('kpLink').textContent=url;$('kpLink').href=url;$('linkbox').classList.add('show')};
+persistCalculation=async function({publish=false}={}){
+  if(savingCalculation)return null;
+  if(installationWarning){showToast(installationWarning,true);return null}
+  const p=payload();
+  if(!p.items.length){showToast('Добавьте хотя бы одну позицию.',true);return null}
+  savingCalculation=true;
+  try{
+    const r=await api(currentId?'/api/calculations/'+currentId:'/api/calculations',{
+      method:currentId?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...p,publish})
+    });
+    currentId=r.id;
+    await loadHistory();
+    return r;
+  }finally{savingCalculation=false}
+};
+saveAndShowLink=async function(){
+  try{
+    const r=await persistCalculation({publish:true});
+    if(!r)return;
+    showLink(r.url,true);
+    setStatus('КП №'+r.id+' сформировано и сохранено');
+  }catch(e){showToast(e.message,true)}
+};
+showLink=function(url,reveal=false){
+  const link=$('kpLink'),box=$('linkbox');
+  const visible=Boolean(url&&permitted('publish_kp'));
+  box.classList.toggle('show',visible);
+  link.textContent=visible?url:'';
+  if(!visible){link.removeAttribute('href');return}
+  link.href=url;
+  if(reveal)requestAnimationFrame(()=>box.scrollIntoView({behavior:'smooth',block:'nearest'}));
+};
 duplicateCalculation=async function(sourceId=null){if(duplicatingCalculation)return;duplicatingCalculation=true;document.querySelectorAll('[data-duplicate]').forEach(b=>b.disabled=true);try{const id=sourceId??currentId;let copy;
   if(id){copy=await api('/api/calculations/'+id+'/duplicate',{method:'POST'});if(sourceId===null&&permitted('edit_own'))await api('/api/calculations/'+copy.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload())});await openCalc(copy.id)}
   else{copy=await api('/api/calculations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload())});currentId=copy.id}
@@ -97,7 +126,7 @@ async function initFeatures(){
   if(!permitted('view_quick'))$('quickModeBtn').hidden=true;
   if(!permitted('view_calculator')&&!permitted('view_quick')){$('detailedCard').hidden=true;$('quickPanel').hidden=true}
   if(!permitted('view_history'))$('historyBody').closest('.card').hidden=true;
-  for(const el of document.querySelectorAll('[onclick]')){const call=el.getAttribute('onclick');if(call==='toggleQuickSettings()'&&!permitted('manage_quick'))el.hidden=true;if(call==='addQuickRow()'&&!permitted('add_oneoff'))el.hidden=true;if(['saveAndShowLink()','saveQuickCalculation()'].includes(call)&&!permitted('publish_kp'))el.hidden=true}
+  for(const el of document.querySelectorAll('[onclick]')){const call=el.getAttribute('onclick');if(call==='toggleQuickSettings()'&&!permitted('manage_quick'))el.hidden=true;if(call==='addQuickRow()'&&!permitted('add_oneoff'))el.hidden=true;if(['saveCalculation()','saveQuickCalculation()'].includes(call)&&!permitted('publish_kp'))el.hidden=true}
   for(const group of ['services','products']){discountChanged(group);if(!permitted('edit_discount'))for(const suffix of ['DiscountType','DiscountValue','DiscountReason'])$(group+suffix).disabled=true}
   await loadHistory();featuresReady=true;
 }

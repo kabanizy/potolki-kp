@@ -29,6 +29,8 @@ async function photo(id,cookie){const r=await fetch(base+'/api/prices/'+id+'/pho
  const make=(item,qty,index)=>({id:index,price_item_id:item.id,name:item.name,unit:item.unit,qty,price:item.price,calc_group:'canvas'});
  const draft={client_name:'Клиент',phone:'123',address:'Тест',manager:'Анна',area:12.5,room_perimeter:14,calculation_type:'detailed',items:[{...make(first,2,1),include_photo:true,photo_id:ph},make(other,1,2)],discount:{services:{type:'custom',value:10,reason:'Тест'},products:{type:'none',value:0}}};
  const saved=(await call('/api/calculations','POST',draft,anna,201)).data;
+ assert.equal((await fetch(base+'/kp/'+saved.id)).status,404,'save without publishing keeps a draft');
+ assert.equal((await call('/api/calculations/'+saved.id,'GET',undefined,anna)).data.url,undefined);
  let original=(await call('/api/calculations/'+saved.id,'GET',undefined,anna)).data;
  assert.equal(original.items.filter(x=>x.name==='Установка полотна').length,1);assert.equal(original.items.find(x=>x.name==='Установка полотна').price,1600);assert.equal(original.items.find(x=>x.name==='Установка полотна').qty,1);
  const published=(await call('/api/calculations/'+saved.id+'/publish','POST',{},anna)).data;
@@ -37,6 +39,12 @@ async function photo(id,cookie){const r=await fetch(base+'/api/prices/'+id+'/pho
  assert.equal(await fetch(published.url).then(r=>r.text()),cpBefore,'photo replacement must not change KP');
  assert.equal((await fetch(published.url.replace('?','/photo/'+ph+'?'))).status,200);
  assert.equal((await fetch(base+'/kp/'+saved.id)).status,404,'new KP requires token');
+ const direct=(await call('/api/calculations','POST',{...draft,client_name:'Публикация при сохранении',items:[make(other,1,3)],publish:true},anna,201)).data;
+ assert.match(new URL(direct.url).searchParams.get('t'),/^[0-9a-f]{48}$/);
+ assert.equal((await fetch(direct.url)).status,200,'saving and publishing returns a working public link');
+ const updated=(await call('/api/calculations/'+direct.id,'PUT',{...draft,client_name:'КП обновлено',items:[make(other,1,3)],publish:true},anna)).data;
+ assert.deepEqual(updated,direct,'updating a published calculation keeps its link');
+ assert((await fetch(updated.url).then(r=>r.text())).includes('КП обновлено'));
  await call('/api/calculations/'+saved.id,'GET',undefined,boris,404);await call('/api/calculations/'+saved.id,'PUT',draft,boris,404);await call('/api/calculations/'+saved.id+'/duplicate','POST',{},boris,404);
  assert.equal((await call('/api/calculations','GET',undefined,boris)).data.length,0);
  await call('/api/prices/'+first.id,'PUT',{price:1},anna,403);await call('/api/prices/%31','DELETE',{},anna,403);
@@ -52,13 +60,15 @@ async function photo(id,cookie){const r=await fetch(base+'/api/prices/'+id+'/pho
  await call('/api/me','GET',undefined,anna,401);anna=await login('anna','Manager2026');
  const redacted=(await call('/api/calculations/'+saved.id,'GET',undefined,anna)).data;assert.equal(redacted.total,undefined);assert.equal(redacted.items[0].price,undefined);assert.equal(redacted.items[0].installation_rate,undefined);assert.equal(redacted.items[0].photo_id,undefined);
  await call('/api/calculations','POST',draft,anna,403);await call('/api/calculations/'+saved.id+'/publish','POST',{},anna,403);
+ await call('/api/calculations/'+saved.id,'PUT',{...original,publish:true},anna,403);
  await call('/api/calculations/'+saved.id,'PUT',{...original,items:original.items.map(x=>({...x,qty:9}))},anna,403);
  await call('/api/photos/'+ph,'GET',undefined,anna,403);
  const qs=(await call('/api/quick-settings','GET',undefined,admin)).data;const added=(await call('/api/quick-settings','POST',{name:'Разовая настройка',price_source:'catalog',price_item_id:first.id,calc_group:'canvas'},admin,201)).data;
  await call('/api/quick-settings/'+added.id,'PUT',{sort_order:0},admin);
  await call('/api/quick-settings/'+qs[1].id,'DELETE',undefined,admin);
  const reordered=(await call('/api/quick-settings','GET',undefined,admin)).data;assert(reordered.every((r,i)=>r.sort_order===i));assert.equal(reordered[0].id,added.id);
- const quick={...draft,calculation_type:'quick',items:[{...make(first,2,91),settingId:added.id}]};const quickSaved=(await call('/api/calculations','POST',quick,admin,201)).data;
+ const quick={...draft,calculation_type:'quick',items:[{...make(first,2,91),settingId:added.id}]};const quickSaved=(await call('/api/calculations','POST',{...quick,publish:true},admin,201)).data;
+ assert.equal((await fetch(quickSaved.url)).status,200,'quick calculation returns a working public link');
  const quickRead=(await call('/api/calculations/'+quickSaved.id,'GET',undefined,admin)).data;assert.equal(quickRead.area,12.5);assert.equal(quickRead.items[0].settingId,added.id);assert.equal(quickRead.items[0].qty,2);assert.equal(quickRead.items.find(x=>x.name==='Установка полотна').price,1800);
  const genericSetting=(await call('/api/quick-settings','POST',{name:'Монтаж светильников',price_source:'manual',calc_group:'services',custom_options:[]},admin,201)).data.id;
  const genericDraft={...draft,calculation_type:'quick',items:[{id:'generic-row',settingId:genericSetting,name:'Подменённое название',unit:'шт',qty:5,price:700,calc_group:'services'}]};

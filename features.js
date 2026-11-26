@@ -221,10 +221,27 @@ function setup({app,db,dbPath,getPrices,getCalc,normalize,cpHtml,publicKpUrl}){
     res.json(rows.map(c=>{const r={...c};delete r.items_json;delete r.discount_json;delete r.public_token;if(!can(req.user,'view_prices')){delete r.total;delete r.subtotal;delete r.discount_amount}return r}));
   }));
   app.get('/api/calculations/:id',guard((req,res)=>{requirePermission(req,'view_history');res.json(responseCalc(req,owned(req,req.params.id)))}));
-  function save(req,p,id=null){const values=[p.client_name,p.phone,p.address,p.manager,p.notes,p.area,p.room_perimeter,p.calculation_type,JSON.stringify(p.items),JSON.stringify(p.discount),p.subtotal,p.discount_amount,p.total];if(id){db.prepare("UPDATE calculations SET client_name=?,phone=?,address=?,manager=?,notes=?,area=?,room_perimeter=?,calculation_type=?,items_json=?,discount_json=?,subtotal=?,discount_amount=?,total=?,updated_at=datetime('now','localtime') WHERE id=?").run(...values,id);return id}return Number(db.prepare('INSERT INTO calculations(client_name,phone,address,manager,notes,area,room_perimeter,calculation_type,items_json,discount_json,subtotal,discount_amount,total,owner_id,published,public_token) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)').run(...values,req.user.id,crypto.randomBytes(24).toString('hex')).lastInsertRowid)}
-  app.post('/api/calculations',guard((req,res)=>{const id=save(req,calculate(req));res.status(201).json({id})}));
-  app.put('/api/calculations/:id',guard((req,res)=>{const c=owned(req,req.params.id,true),id=save(req,calculate(req,c),c.id);res.json({id})}));
-  app.post('/api/calculations/:id/duplicate',guard((req,res)=>{requirePermission(req,'view_history');const c=owned(req,req.params.id);requirePermission(req,c.calculation_type==='quick'?'create_quick':'create_calculations');const id=save(req,c);res.status(201).json({id,source_id:c.id})}));
+  function save(req,p,id=null,publish=false){
+    const values=[p.client_name,p.phone,p.address,p.manager,p.notes,p.area,p.room_perimeter,p.calculation_type,JSON.stringify(p.items),JSON.stringify(p.discount),p.subtotal,p.discount_amount,p.total];
+    if(id){
+      return db.prepare(`UPDATE calculations SET client_name=?,phone=?,address=?,manager=?,notes=?,area=?,room_perimeter=?,
+        calculation_type=?,items_json=?,discount_json=?,subtotal=?,discount_amount=?,total=?,
+        published=CASE WHEN ? THEN 1 ELSE published END,updated_at=datetime('now','localtime')
+        WHERE id=? RETURNING id,public_token`).get(...values,Number(publish),id);
+    }
+    return db.prepare(`INSERT INTO calculations(client_name,phone,address,manager,notes,area,room_perimeter,calculation_type,
+      items_json,discount_json,subtotal,discount_amount,total,owner_id,published,public_token)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id,public_token`).get(...values,req.user.id,Number(publish),crypto.randomBytes(24).toString('hex'));
+  }
+  function saveCalculation(req,res,current=null){
+    const publish=req.body?.publish===true;
+    if(publish)requirePermission(req,'publish_kp');
+    const saved=save(req,calculate(req,current),current?.id,publish);
+    res.status(current?200:201).json(publish?{id:saved.id,url:calcUrl(req,saved)}:{id:saved.id});
+  }
+  app.post('/api/calculations',guard((req,res)=>saveCalculation(req,res)));
+  app.put('/api/calculations/:id',guard((req,res)=>saveCalculation(req,res,owned(req,req.params.id,true))));
+  app.post('/api/calculations/:id/duplicate',guard((req,res)=>{requirePermission(req,'view_history');const c=owned(req,req.params.id);requirePermission(req,c.calculation_type==='quick'?'create_quick':'create_calculations');const {id}=save(req,c);res.status(201).json({id,source_id:c.id})}));
   app.post('/api/calculations/:id/publish',guard((req,res)=>{requirePermission(req,'publish_kp');const c=owned(req,req.params.id);if(c.owner_id!==req.user.id)requirePermission(req,'edit_others');db.prepare('UPDATE calculations SET published=1 WHERE id=?').run(c.id);res.json({id:c.id,url:calcUrl(req,c)})}));
   app.delete('/api/calculations/:id',guard((req,res)=>{const c=owned(req,req.params.id,true);db.prepare('DELETE FROM calculations WHERE id=?').run(c.id);res.json({ok:true})}));
   app.get('/kp/:id/photo/:photo',guard((req,res)=>{const c=getCalc(Number(req.params.id));if(!publicAllowed(req,c))fail('КП не найдено',404);if(!c.items.some(x=>x.include_photo&&x.photo_id===req.params.photo))fail('Фото не включено в КП',404);sendPhoto(res,req.params.photo)}));
