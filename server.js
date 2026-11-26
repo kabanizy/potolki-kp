@@ -448,7 +448,7 @@ function discountLabel(d){
   if(type==='fixed') return `Скидка — ${value.toLocaleString('ru-RU')} ₽`;
   return 'Без скидки';
 }
-function cpHtml(c){
+function cpHtml(c,{photoUrl=id=>`/kp/${c.id}/photo/${encodeURIComponent(id)}${c.public_token?'?t='+encodeURIComponent(c.public_token):''}`}={}){
   const allItems=(c.items||[]).map(x=>({...x,calc_group:normalizedItemGroup(x)}));
   const canvas=allItems.filter(x=>x.calc_group==='canvas');
   const services=allItems.filter(x=>x.calc_group==='services');
@@ -472,7 +472,10 @@ function cpHtml(c){
   const materialDiscount=servicesDiscount-canvasDiscount;
   const appliedServicesDiscount=useLegacySplit?(legacyCeilingInfo.type!=='none'?legacyCeilingInfo:legacyLightingInfo):servicesDiscountInfo;
   const rub=v=>`${Number(v||0).toLocaleString('ru-RU',{maximumFractionDigits:2})} ₽`;
-  const rows=(arr)=>arr.map((x,i)=>`<tr><td class="r">${i+1}.</td><td class="item-cell">${esc(x.name)}${x.include_photo&&x.photo_id?`<img class="item-photo" src="/kp/${c.id}/photo/${encodeURIComponent(x.photo_id)}${c.public_token?'?t='+encodeURIComponent(c.public_token):''}" alt="${esc(x.name)}">`:''}</td><td class="r qty-cell">${Number(x.qty)||0}</td><td class="unit-cell">${esc(x.unit)}</td><td class="r money-cell">${rub(x.price)}</td><td class="r money-cell strong">${rub((Number(x.qty)||0)*(Number(x.price)||0))}</td></tr>`).join('');
+  const rows=(arr)=>arr.map((x,i)=>{
+    const photo=x.include_photo&&x.photo_id?photoUrl(x.photo_id):null;
+    return `<tr><td class="r">${i+1}.</td><td class="item-cell">${esc(x.name)}${photo?`<img class="item-photo" src="${esc(photo)}" alt="${esc(x.name)}">`:''}</td><td class="r qty-cell">${Number(x.qty)||0}</td><td class="unit-cell">${esc(x.unit)}</td><td class="r money-cell">${rub(x.price)}</td><td class="r money-cell strong">${rub((Number(x.qty)||0)*(Number(x.price)||0))}</td></tr>`;
+  }).join('');
   const mini=(sub,disc,d)=>`<div class="mini"><div><span>Подытог</span><b>${rub(sub)}</b></div><div class="discount-line"><span>${esc(discountLabel(d))}</span><b>− ${rub(disc)}</b></div>${d?.reason?`<div class="comment-line"><span>Комментарий к скидке</span><span>${esc(d.reason)}</span></div>`:''}</div>`;
   const block=(title,arr,sub,disc,d,extra='')=>arr.length?`<section class="estimate-section">
     <div class="section-title"><span>${esc(title)}</span><b>${rub(sub-disc)}</b></div>

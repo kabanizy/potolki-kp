@@ -166,10 +166,19 @@ function setup({app,db,dbPath,getPrices,getCalc,normalize,cpHtml,publicKpUrl}){
   function owned(req,id,editing=false){const c=getCalc(Number(id));if(!c||!visible(req,c))fail('Расчёт не найден',404);if(editing)requirePermission(req,c.owner_id===req.user.id?'edit_own':'edit_others');return c}
   function calcUrl(req,c){return publicKpUrl(req,c.id)+(c.public_token?'?t='+c.public_token:'')}
   function publicAllowed(req,c){return !!c&&!!c.published&&(!c.public_token||(typeof req.query.t==='string'&&req.query.t===c.public_token))}
+  function quoteLinks(req,c){
+    const result={id:c.id,published:c.published};
+    if(can(req.user,'view_prices'))result.preview_url=`/calculations/${c.id}/preview`;
+    if(can(req.user,'publish_kp')){
+      if(c.published)result.url=calcUrl(req,c);
+      else result.can_publish=c.owner_id===req.user.id||can(req.user,'edit_others');
+    }
+    return result;
+  }
   function responseCalc(req,c){const data={...c,items:c.items.map(x=>({...x})),discount:c.discount};delete data.items_json;delete data.discount_json;delete data.public_token;
     if(!can(req.user,'view_prices')){for(const key of ['subtotal','discount_amount','total'])delete data[key];data.items.forEach(x=>{delete x.price;delete x.installation_rate})}
     if(!can(req.user,'view_photos'))data.items.forEach(x=>{delete x.photo_id;delete x.include_photo});
-    if(can(req.user,'publish_kp')&&c.published)data.url=calcUrl(req,c);return data;
+    return {...data,...quoteLinks(req,c)};
   }
   function calculate(req,old=null){
     const b=req.body||{},quick=b.calculation_type==='quick';requirePermission(req,quick?'view_quick':'view_calculator');
@@ -227,23 +236,40 @@ function setup({app,db,dbPath,getPrices,getCalc,normalize,cpHtml,publicKpUrl}){
       return db.prepare(`UPDATE calculations SET client_name=?,phone=?,address=?,manager=?,notes=?,area=?,room_perimeter=?,
         calculation_type=?,items_json=?,discount_json=?,subtotal=?,discount_amount=?,total=?,
         published=CASE WHEN ? THEN 1 ELSE published END,updated_at=datetime('now','localtime')
-        WHERE id=? RETURNING id,public_token`).get(...values,Number(publish),id);
+        WHERE id=? RETURNING id,owner_id,published,public_token`).get(...values,Number(publish),id);
     }
     return db.prepare(`INSERT INTO calculations(client_name,phone,address,manager,notes,area,room_perimeter,calculation_type,
       items_json,discount_json,subtotal,discount_amount,total,owner_id,published,public_token)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id,public_token`).get(...values,req.user.id,Number(publish),crypto.randomBytes(24).toString('hex'));
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id,owner_id,published,public_token`).get(...values,req.user.id,Number(publish),crypto.randomBytes(24).toString('hex'));
   }
   function saveCalculation(req,res,current=null){
     const publish=req.body?.publish===true;
     if(publish)requirePermission(req,'publish_kp');
     const saved=save(req,calculate(req,current),current?.id,publish);
-    res.status(current?200:201).json(publish?{id:saved.id,url:calcUrl(req,saved)}:{id:saved.id});
+    res.status(current?200:201).json(quoteLinks(req,saved));
   }
   app.post('/api/calculations',guard((req,res)=>saveCalculation(req,res)));
   app.put('/api/calculations/:id',guard((req,res)=>saveCalculation(req,res,owned(req,req.params.id,true))));
-  app.post('/api/calculations/:id/duplicate',guard((req,res)=>{requirePermission(req,'view_history');const c=owned(req,req.params.id);requirePermission(req,c.calculation_type==='quick'?'create_quick':'create_calculations');const {id}=save(req,c);res.status(201).json({id,source_id:c.id})}));
-  app.post('/api/calculations/:id/publish',guard((req,res)=>{requirePermission(req,'publish_kp');const c=owned(req,req.params.id);if(c.owner_id!==req.user.id)requirePermission(req,'edit_others');db.prepare('UPDATE calculations SET published=1 WHERE id=?').run(c.id);res.json({id:c.id,url:calcUrl(req,c)})}));
+  app.post('/api/calculations/:id/duplicate',guard((req,res)=>{
+    requirePermission(req,'view_history');
+    const c=owned(req,req.params.id);
+    requirePermission(req,c.calculation_type==='quick'?'create_quick':'create_calculations');
+    let copy=c;
+    if(req.body?.items!==undefined){
+      requirePermission(req,'edit_own');
+      if(req.body.calculation_type!==c.calculation_type)fail('Тип расчёта при дублировании должен совпадать');
+      copy=calculate(req,c);
+    }
+    res.status(201).json({...quoteLinks(req,save(req,copy)),source_id:c.id});
+  }));
+  app.post('/api/calculations/:id/publish',guard((req,res)=>{requirePermission(req,'publish_kp');const c=owned(req,req.params.id);if(c.owner_id!==req.user.id)requirePermission(req,'edit_others');db.prepare('UPDATE calculations SET published=1 WHERE id=?').run(c.id);res.json(quoteLinks(req,{...c,published:1}))}));
   app.delete('/api/calculations/:id',guard((req,res)=>{const c=owned(req,req.params.id,true);db.prepare('DELETE FROM calculations WHERE id=?').run(c.id);res.json({ok:true})}));
+  app.get('/calculations/:id/preview',guard((req,res)=>{
+    const c=owned(req,req.params.id);
+    requirePermission(req,'view_prices');
+    const photoUrl=can(req.user,'view_photos')?id=>'/api/photos/'+encodeURIComponent(id):()=>null;
+    res.send(cpHtml(c,{photoUrl}));
+  }));
   app.get('/kp/:id/photo/:photo',guard((req,res)=>{const c=getCalc(Number(req.params.id));if(!publicAllowed(req,c))fail('КП не найдено',404);if(!c.items.some(x=>x.include_photo&&x.photo_id===req.params.photo))fail('Фото не включено в КП',404);sendPhoto(res,req.params.photo)}));
   app.get('/kp/:id',guard((req,res)=>{const c=getCalc(Number(req.params.id));if(!publicAllowed(req,c))return res.status(404).send('КП не найдено');res.setHeader('Cache-Control','no-store');res.send(cpHtml(c))}));
   // Central server-side guards also cover the original catalogue editing endpoints.

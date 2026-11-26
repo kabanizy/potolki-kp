@@ -1,5 +1,6 @@
 // Extend the existing calculator; saved values are restored without consulting today's prices.
 let currentUser=null,featuresReady=false,installationWarning='',savedDiscounts=null,discountsEdited=false,savingCalculation=false;
+let activeQuote=null,quoteAnimation=null,calculationRequest=0;
 const permitted=key=>!!currentUser?.permissions[key];
 api=async function(url,opt={}){const r=await fetch(url,{...opt,headers:{'X-Requested-With':'calculator',...opt.headers}});if(r.status===401){location.href='/login';throw Error('Войдите в аккаунт')}const data=await r.json();if(!r.ok)throw Error(data.error||'Ошибка запроса');return data};
 const baseDiscountChanged=discountChanged;
@@ -64,51 +65,150 @@ recalc=function(){baseRecalc();const warning=$('installationWarning');if(warning
 payload=function(){const p=basePayload();return {...p,discount:savedDiscounts&&!discountsEdited?savedDiscounts:p.discount,items:p.items.map(x=>({...x}))}};
 document.addEventListener('input',e=>{if(/^(services|products)Discount/.test(e.target.id))discountsEdited=true});
 document.addEventListener('change',e=>{if(/^(services|products)Discount/.test(e.target.id))discountsEdited=true});
-persistCalculation=async function({publish=false}={}){
-  if(savingCalculation)return null;
+function calculationPayload(){
   if(installationWarning){showToast(installationWarning,true);return null}
   const p=payload();
   if(!p.items.length){showToast('Добавьте хотя бы одну позицию.',true);return null}
+  return p;
+}
+async function persistCalculation({publish=false}={}){
+  if(savingCalculation||duplicatingCalculation)return null;
+  const p=calculationPayload();
+  if(!p)return null;
+  ++calculationRequest;
   savingCalculation=true;
   try{
     const r=await api(currentId?'/api/calculations/'+currentId:'/api/calculations',{
       method:currentId?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...p,publish})
     });
     currentId=r.id;
+    showQuote(r,{reveal:publish});
     await loadHistory();
     return r;
   }finally{savingCalculation=false}
-};
-saveAndShowLink=async function(){
+}
+async function saveAndShowLink(){
   try{
     const r=await persistCalculation({publish:true});
     if(!r)return;
-    showLink(r.url,true);
     setStatus('КП №'+r.id+' сформировано и сохранено');
   }catch(e){showToast(e.message,true)}
-};
-showLink=function(url,reveal=false){
-  const link=$('kpLink'),box=$('linkbox');
-  const visible=Boolean(url&&permitted('publish_kp'));
-  box.classList.toggle('show',visible);
-  link.textContent=visible?url:'';
-  if(!visible){link.removeAttribute('href');return}
-  link.href=url;
-  if(reveal)requestAnimationFrame(()=>box.scrollIntoView({behavior:'smooth',block:'nearest'}));
-};
-duplicateCalculation=async function(sourceId=null){if(duplicatingCalculation)return;duplicatingCalculation=true;document.querySelectorAll('[data-duplicate]').forEach(b=>b.disabled=true);try{const id=sourceId??currentId;let copy;
-  if(id){copy=await api('/api/calculations/'+id+'/duplicate',{method:'POST'});if(sourceId===null&&permitted('edit_own'))await api('/api/calculations/'+copy.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload())});await openCalc(copy.id)}
-  else{copy=await api('/api/calculations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload())});currentId=copy.id}
-  $('linkbox').classList.remove('show');await loadHistory();showToast('Создана копия №'+copy.id+'. Для ссылки нажмите «Сформировать КП».');
-}catch(e){showToast(e.message,true)}finally{duplicatingCalculation=false;document.querySelectorAll('[data-duplicate]').forEach(b=>b.disabled=false)}};
+}
+function setQuoteCollapsed(collapsed){
+  const toggle=$('kpToggle');
+  $('kpDockBody').hidden=collapsed;
+  toggle.setAttribute('aria-expanded',String(!collapsed));
+  toggle.setAttribute('aria-label',collapsed?'Развернуть панель КП':'Свернуть панель КП');
+  toggle.textContent=collapsed?'+':'−';
+}
+function showQuote(quote,{reveal=false,editor=quote?.id===currentId}={}){
+  const box=$('linkbox'),link=$('kpLink'),address=$('kpAddress');
+  const url=quote?.url||quote?.preview_url;
+  const highlight=reveal||quote?.id!==activeQuote?.id||quote?.published!==activeQuote?.published;
+  activeQuote=quote;
+  if(!quote)++calculationRequest;
+  box.hidden=!(url||quote?.can_publish);
+  if(box.hidden){link.removeAttribute('href');return}
+  $('kpTitle').textContent='КП №'+quote.id;
+  $('kpState').textContent=quote.published?'Опубликовано':'Черновик';
+  box.classList.toggle('is-published',Boolean(quote.published));
+  link.hidden=!url;
+  if(url)link.href=url;
+  else link.removeAttribute('href');
+  link.textContent=quote.url?'Открыть КП ↗':'Предпросмотр ↗';
+  link.classList.toggle('ghost',!quote.url);
+  address.hidden=!url;
+  address.textContent=quote.url||(url?'Предпросмотр доступен после входа.':'');
+  address.title=quote.url||'';
+  $('kpCopy').hidden=!quote.url;
+  $('kpPublish').hidden=!quote.can_publish;
+  $('kpEditor').hidden=!editor;
+  if(!highlight)return;
+  setQuoteCollapsed(false);
+  quoteAnimation?.cancel();
+  if(!matchMedia('(prefers-reduced-motion: reduce)').matches){
+    quoteAnimation=box.animate([
+      {transform:'translateY(7px)',boxShadow:'0 0 0 5px rgba(36,75,125,.24), 0 12px 30px rgba(25,59,104,.2)'},
+      {transform:'translateY(0)',boxShadow:getComputedStyle(box).boxShadow}
+    ],{duration:650,easing:'ease-out'});
+  }
+}
+$('kpToggle').addEventListener('click',()=>setQuoteCollapsed(!$('kpDockBody').hidden));
+$('kpEditor').addEventListener('click',()=>{
+  const editor=$('calculationEditor');
+  editor.focus({preventScroll:true});
+  editor.scrollIntoView({block:'start'});
+});
+$('kpCopy').addEventListener('click',async()=>{
+  const url=activeQuote?.url;
+  if(!url)return;
+  try{await navigator.clipboard.writeText(url)}
+  catch{
+    const field=document.createElement('textarea');
+    field.value=url;
+    field.style.position='fixed';
+    field.style.opacity='0';
+    document.body.append(field);
+    field.select();
+    const copied=document.execCommand('copy');
+    field.remove();
+    $('kpCopy').focus({preventScroll:true});
+    if(!copied){showToast('Откройте КП и скопируйте адрес из браузера.',true);return}
+  }
+  showToast('Ссылка на КП скопирована');
+});
+$('kpPublish').addEventListener('click',async()=>{
+  if(!activeQuote?.can_publish||savingCalculation||duplicatingCalculation)return;
+  const id=activeQuote.id,button=$('kpPublish');
+  savingCalculation=true;
+  button.disabled=true;
+  try{
+    const quote=await api(`/api/calculations/${id}/publish`,{method:'POST'});
+    if(activeQuote?.id!==id)return;
+    const focusWasHere=document.activeElement===button;
+    showQuote(quote,{reveal:true});
+    if(focusWasHere)$('kpLink').focus({preventScroll:true});
+    showToast('КП №'+id+' опубликовано');
+  }catch(e){showToast(e.message,true)}
+  finally{button.disabled=false;savingCalculation=false}
+});
+async function duplicateCalculation(sourceId=null){
+  if(duplicatingCalculation||savingCalculation)return;
+  const id=sourceId??currentId;
+  const useDraft=sourceId===null&&(!id||permitted('edit_own'));
+  const draft=useDraft?calculationPayload():null;
+  if(useDraft&&!draft)return;
+  ++calculationRequest;
+  duplicatingCalculation=true;
+  document.querySelectorAll('[data-duplicate]').forEach(b=>b.disabled=true);
+  try{
+    const url=id?`/api/calculations/${id}/duplicate`:'/api/calculations';
+    const copy=await api(url,{method:'POST',...(draft?{headers:{'Content-Type':'application/json'},body:JSON.stringify(draft)}:{})});
+    if(sourceId===null)currentId=copy.id;
+    showQuote(copy,{reveal:true});
+    if(sourceId!==null)await loadCalculation(copy.id);
+    await loadHistory();
+    showToast('Создан расчёт №'+copy.id);
+  }catch(e){showToast(e.message,true)}
+  finally{duplicatingCalculation=false;document.querySelectorAll('[data-duplicate]').forEach(b=>b.disabled=false)}
+}
 loadHistory=async function(){if(!permitted('view_history'))return;try{const rows=await api('/api/calculations?q='+encodeURIComponent($('search').value.trim()));rows.sort((a,b)=>historySort.dir==='asc'?historyCompare(a,b,historySort.key):-historyCompare(a,b,historySort.key));updateHistorySortUI();$('historyBody').innerHTML=rows.map(r=>{const edit=permitted(r.owner_id===currentUser.id?'edit_own':'edit_others'),copy=permitted(r.calculation_type==='quick'?'create_quick':'create_calculations');return `<tr><td><b>${r.id}</b></td><td>${r.calculation_type==='quick'?'Быстрый':'Подробный'}</td><td>${esc(formatDateTime(r.created_at))}</td><td>${esc(r.client_name)}</td><td>${esc(r.phone)}</td><td>${esc(r.address)}</td><td>${esc(r.manager)}</td><td>${permitted('view_prices')?fmt(r.total):'—'}</td><td class="actions-col"><button class="btn small ghost" onclick="openCalc(${r.id})">Открыть</button>${copy?`<button class="btn small ghost" data-duplicate onclick="duplicateCalculation(${r.id})">Дублировать расчёт</button>`:''}${edit?`<button class="btn small danger" onclick="delCalc(${r.id})">Удалить</button>`:''}</td></tr>`}).join('')||'<tr><td colspan="9">Расчётов пока нет.</td></tr>'}catch(e){showToast(e.message,true)}};
 function showSavedCalculation(d){const modal=document.createElement('dialog');modal.className='photo-dialog';modal.innerHTML='<button class="btn">Закрыть</button><h2>Расчёт №'+d.id+'</h2><p>'+esc(d.client_name)+' · '+esc(d.address)+'</p><div class="table-wrap"><table><thead><tr><th>Позиция</th><th>Количество</th>'+(permitted('view_prices')?'<th>Цена</th><th>Сумма</th>':'')+'</tr></thead><tbody>'+d.items.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+x.qty+' '+esc(x.unit)+'</td>'+(permitted('view_prices')?'<td>'+fmt(x.price)+'</td><td>'+fmt(x.qty*x.price)+'</td>':'')+'</tr>').join('')+'</tbody></table></div>'+(permitted('view_prices')?'<p>Итого: '+fmt(d.total)+'</p>':'');modal.querySelector('button').onclick=()=>modal.close();modal.onclose=()=>modal.remove();document.body.append(modal);modal.showModal()}
-openCalc=async function(id){try{const d=await api('/api/calculations/'+id);if(!permitted(d.calculation_type==='quick'?'view_quick':'view_calculator')){showSavedCalculation(d);return}currentId=id;installationWarning='';savedDiscounts=d.discount;discountsEdited=false;for(const [field,key]of Object.entries({clientName:'client_name',phone:'phone',address:'address',manager:'manager',notes:'notes',roomArea:'area',roomPerimeter:'room_perimeter'}))$(field).value=d[key]??'';clearInputState();
+async function loadCalculation(id){
+  const request=++calculationRequest,d=await api('/api/calculations/'+id);
+  if(request!==calculationRequest)return false;
+  if(!permitted(d.calculation_type==='quick'?'view_quick':'view_calculator')){showQuote(d,{reveal:true,editor:false});showSavedCalculation(d);return true}
+  currentId=id;installationWarning='';savedDiscounts=d.discount;discountsEdited=false;for(const [field,key]of Object.entries({clientName:'client_name',phone:'phone',address:'address',manager:'manager',notes:'notes',roomArea:'area',roomPerimeter:'room_perimeter'}))$(field).value=d[key]??'';clearInputState();
   if(d.calculation_type==='quick'){items=[];quickRows=d.items.map((x,i)=>({...x,id:x.id??Date.now()+i,price:x.price??0,label:x.name,price_source:x.price_item_id?'catalog':'manual',snapshot:true}));renderQuickRows();setCalcMode('quick',true)}
   else{quickRows=[];items=d.items.map((x,i)=>({...x,id:x.id??Date.now()+i,price:x.price??0,snapshot:true}));setCalcMode('detailed',true);for(const x of items){const qty=$('qty-'+x.price_item_id),price=$('price-'+x.price_item_id),unit=$('unit-'+x.price_item_id),sum=$('sum-'+x.price_item_id);if(qty){qty.value=x.qty;if(qty.type==='checkbox')qty.checked=x.qty>0}if(price)price.value=x.price;if(unit)unit.value=x.unit;if(sum)sum.textContent=fmt(x.qty*x.price)}}
   for(const group of ['services','products']){const discount=d.discount?.[group]||{type:'none',value:0,reason:''};$(group+'DiscountType').value=discount.type;discountChanged(group);$(group+'DiscountValue').value=discount.value;$(group+'DiscountReason').value=discount.reason||''}
-  showLink(d.url);recalc();showToast('Расчёт №'+id+' открыт');window.scrollTo({top:0,behavior:'smooth'});
-}catch(e){showToast(e.message,true)}};
+  showQuote(d,{reveal:true});recalc();return true;
+}
+async function openCalc(id){
+  if(savingCalculation||duplicatingCalculation)return;
+  try{if(await loadCalculation(id))showToast('Расчёт №'+id+' открыт')}
+  catch(e){showToast(e.message,true)}
+}
 qtyChanged=function(id,skip=false){const it=findItem(id);if(!it)return;const previous=items.find(x=>x.price_item_id===id),qty=num($('qty-'+id).value);if(qty>0){const next={...it,...previous,id:previous?.id??Date.now()+Math.random(),price_item_id:id,qty,price:num($('price-'+id).value),unit:$('unit-'+id).value,source:'price'};if(it.name===AUTO_INSTALL_NAME)next.installation_manual=true;if(previous)items[items.indexOf(previous)]=next;else items.push(next)}else items=items.filter(x=>x.price_item_id!==id);const sum=$('sum-'+id),row=$('row-'+id);if(sum)sum.textContent=fmt(qty*num($('price-'+id).value));if(row)row.classList.toggle('row-on',qty>0);if(!skip)syncAutoInstallation();renderSelected();recalc()};
 const oldNewCalc=newCalc;
 newCalc=function(){oldNewCalc();if(!currentId){installationWarning='';savedDiscounts=null;discountsEdited=false;$('manager').value=currentUser?.name||'';recalc()}};
